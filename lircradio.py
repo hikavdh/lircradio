@@ -4,7 +4,7 @@
 description_text = """
     This script listens to commands comming in through a fifopipe.
     In reaction commands in radioFunctions.py are executed.
-    It also starts a ircat daemon that puts lirc commands into the pipe,
+    It also starts an ircat daemon that puts lirc commands into the pipe,
     but very nice you can also do this through ssh, remotely starting
     your radio or suspending a machine, without locking up your console:
 
@@ -105,6 +105,10 @@ class Configure:
         self.fifo_write = None
         self.ircat_pid = None
 
+        self.dev_types = {}
+        self.dev_types[0] = 'ivtv radio device'
+        self.dev_types[1] = 'radio with alsa device'
+        self.dev_types[2] = 'radio cabled to an audio card'
         self.opt_dict['myth_backend'] = socket.gethostname()
         self.opt_dict['radio_cardtype'] = -1
         self.opt_dict['radio_device']  = None
@@ -808,6 +812,20 @@ class Configure:
                 return(1)
 
     # end validate_commandline()
+
+    def validate_config(self):
+        if len(self.radio_devs) == 0:
+            print 'No radio devices found!\n'
+
+        elif len(self.radio_devs) == 1:
+            print 'Only one radio devices found of type %s!\n' % self.dev_types[self.radio_devs[0]['radio_cardtype']]
+
+        else:
+            print 'Select the radio device to use:\n'
+            for i in range(len(self.radio_devs)):
+                print
+
+    # end validate_config()
 
     def open_fifo_filehandles(self):
         # Checking out the fifo file

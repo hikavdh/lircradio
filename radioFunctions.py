@@ -53,6 +53,10 @@ class FunctionConfig:
         for v in self.functioncalls.values():
             self.call_list.append(v)
 
+        self.mutetext = {}
+        self.mutetext[0] = 'Unmuting'
+        self.mutetext[1] = 'Muting'
+
         self.channels = {}
         self.frequencies = {}
         self.opt_dict = {}
@@ -374,11 +378,6 @@ class RadioFunctions:
     """
     All functions to manipulate the radio and others
     """
-    def __init__(self):
-        pass
-
-    # end Init()
-
     def rf_function_call(self, rf_call_id):
         if rf_call_id == 'PowerOff'and config.command_name != None:
             log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
@@ -628,7 +627,7 @@ class RadioFunctions:
             frequency = float(channel)/10
             if frequency in config.frequencies.keys():
                 config.new_channel = config.frequencies[frequency]
-                config.set_channel()
+                self.set_channel()
 
         elif channel > 1100:
             # It's a TV Channel *1000
@@ -676,8 +675,9 @@ class RadioFunctions:
             return
 
         try:
-            log('Setting frequency for %s to %3.1f MHz' % (config.opt_dict['radio_device'], config.channels[config.new_channel]['frequency']), 8)
-            check_call([config.v4l2_ctl, '--device=%s' % config.opt_dict['radio_device'], '--set-freq=%s' % config.channels[config.new_channel]['frequency']])
+            chanid = config.channels[config.new_channel]
+            log('Setting frequency for %s to %3.1f MHz(%s)' % (config.opt_dict['radio_device'], chanid['frequency'], chanid['title']), 8)
+            check_call([config.v4l2_ctl, '--device=%s' % config.opt_dict['radio_device'], '--set-freq=%s' % chanid['frequency']])
             config.active_channel = config.new_channel
 
         except:
@@ -731,9 +731,11 @@ class RadioFunctions:
     def set_volume(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True, volume = 0):
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
+            log('Setting playbackvolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'playback')
 
         elif (not playback) and 'capture' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
+            log('Setting capturevolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'capture')
 
     # end set_volume()
@@ -758,9 +760,11 @@ class RadioFunctions:
             val = 0
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
+            log('%s playbackvolume for %s on %s.' % (config.mutetext[val], mixer_ctrl, config.alsa_cards[cardnr]['name']), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setmute(val)
 
         elif (not playback) and 'capture' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
+            log('%s capturevolume for %s on %s.' % (config.mutetext[val], mixer_ctrl, config.alsa_cards[cardnr]['name']), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setrec(val)
 
     # end set_mute()
@@ -773,6 +777,7 @@ class RadioFunctions:
         if vol > 100:
             vol = 100
 
+        log('Setting playbackvolume for %s on %s to %s.' % (config.opt_dict['audio_mixer'], config.opt_dict['audio_card'], vol), 16)
         config.mixer.setvolume(vol)
         return
 
@@ -786,6 +791,7 @@ class RadioFunctions:
         if vol < 0:
             vol = 0
 
+        log('Setting playbackvolume for %s on %s to %s.' % (config.opt_dict['audio_mixer'], config.opt_dict['audio_card'], vol), 16)
         config.mixer.setvolume(vol)
         return
 
@@ -795,6 +801,7 @@ class RadioFunctions:
         log('Executing toggle_radio_mute', 32)
         mute = config.mixer.getmute()[0]
         mute = 1 - mute
+        log('%s playbackvolume for %s on %s.' % (config.mutetext[mute], config.opt_dict['audio_mixer'], config.opt_dict['audio_card']), 16)
         config.mixer.setmute(mute)
         return
 
