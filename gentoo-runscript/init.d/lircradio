@@ -1,0 +1,86 @@
+#!/sbin/runscript
+# Copyright 2015 Hika van den Hoven
+# Distributed under the terms of the GNU General Public License v2
+# $Header: $
+
+depend() {
+	need lircd
+	after lircd
+}
+
+start() {
+
+	ebegin "Starting Lirc Radio"
+
+	eindent
+
+	einfo "Checking LogFiles and permissions"
+	if [ "${LogDir}" != "" ]; then
+		LogDir="/var/log/${LogDir}"
+		checkpath -d -o ${RADIO_UID} -m 755 "${LogDir}"
+	else
+		LogDir="/var/log"
+	fi
+	LogFile="${LogDir}/${LogFile}.log"
+	checkpath -q -f -o ${RADIO_UID} -m 644 "${LogFile}"
+
+	if [ "$(pgrep -u ${RADIO_UID} ircat)" ]; then
+		einfo "Terminating existing ircat daemon"
+		start-stop-daemon --stop --quiet \
+			--user ${RADIO_UID} --name ircat
+		eend $?
+	fi
+	[ ! -e "/tmp/${FiFo}" ] || rm "/tmp/${FiFo}"
+	checkpath -q -f -o ${RADIO_UID} -m 622 "/tmp/${FiFo}"
+	eend $?
+
+	einfo "Starting Control Script"
+	start-stop-daemon --start --quiet --background --wait 1000 \
+		--pidfile "/run/lircradio-${RADIO_UID}.pid" --make-pidfile \
+		--user ${RADIO_UID} --name "lircradio" \
+                --exec ${ScriptDir}/lircradio.py -- --quiet --log-file "${LogFile}" \
+                        --fifo-file "/tmp/${FiFo}" --lirc-id "${LircProgID}"
+        echo "start" > "/tmp/${FiFo}"
+	eend $?
+
+	eoutdent
+}
+
+stop() {
+	ebegin "Stopping Lirc Radio"
+
+	eindent
+
+        einfo "Stopping Control Script"
+        echo "quit" > "/tmp/${FiFo}"
+        sleep 1
+        einfo "It should allready have stoped, but just in case it hung."
+        start-stop-daemon --stop --quiet \
+                --pidfile "/run/lircradio-${RADIO_UID}.pid"
+        ewend $?
+
+	if [ "$(pgrep -u ${RADIO_UID} ircat)" ]; then
+		einfo "Terminating ircat daemon"
+		start-stop-daemon --stop --quiet \
+			--pidfile "/run/ircat-${RADIO_UID}.pid"
+		eend $?
+	fi
+	[ ! -e "/tmp/${FiFo}" ] || rm "/tmp/${FiFo}"
+
+	einfo "Terminating ivtv-radio if still running"
+	if [ "$(pgrep -u ${RADIO_UID} iradio)" ]; then
+		start-stop-daemon --stop --quiet \
+			--user ${RADIO_UID} --name iradio
+	fi
+	if [ "$(pgrep -u ${RADIO_UID} aplay)" ]; then
+		start-stop-daemon --stop --quiet \
+			--user ${RADIO_UID} --name aplay
+	fi
+	if [ "$(pgrep -u ${RADIO_UID} ivtv-radio)" ]; then
+		start-stop-daemon --stop --quiet \
+			--user ${RADIO_UID} --name ivtv-radio
+	fi
+	eend $?
+
+	eoutdent
+}

@@ -1,0 +1,19 @@
+# User id that all the processes should run as.
+RADIO_UID="mythtv"
+# Location of the python files
+ScriptDir="/usr/bin"
+# The FIFO file for placing commands through ircat or otherwise
+FiFo="${RADIO_UID}-fiforadio"
+# Lirc ProgramName in .lircrc for ircat to listen to
+LircProgID="mythradio"
+# The directory and file in /var/log to log to. The extention .log is appended
+#LogDir="mythradio"
+LogDir="lircradio"
+LogFile="lircradio"
+# To set it up run mythradio.py once with --configure
+# and then adapt the resulting radioFunctions.conf to your wishes
+# By default this is found in ~/.ivtv/ or /etc/lircradio/
+# If you don't want to use it to control a radio
+# set radio_cardtype = -1 or it probably will not start
+# If you don want it to check with a mythtv backend
+# set myth_backend = None
