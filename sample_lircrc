@@ -1,0 +1,121 @@
+# Power Off/Exit
+begin
+	prog = mythradio
+	button = KEY_POWER2
+	repeat = 0
+	config = suspend
+end
+
+begin
+	prog = mythtv
+	button = KEY_RADIO
+	repeat = 0
+	config = start_stop_radio
+end
+
+begin
+	prog = mythradio
+	button = KEY_MUTE
+	repeat = 0
+	config = mute
+end
+
+begin
+	prog = mythradio
+	button = KEY_VOLUMEUP
+	repeat = 0
+	config = V+
+end
+
+begin
+	prog = mythradio
+	button = KEY_VOLUMEDOWN
+	repeat = 0
+	config = V-
+end
+
+begin
+	prog = mythradio
+	button = KEY_CHANNELUP
+	repeat = 0
+	config = Ch+
+end
+
+begin
+	prog = mythradio
+	button = KEY_CHANNELDOWN
+	repeat = 0
+	config = Ch-
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP0
+	repeat = 0
+	config = 0
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP1
+	repeat = 0
+	config = 1
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP2
+	repeat = 0
+	config = 2
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP3
+	repeat = 0
+	config = 3
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP4
+	repeat = 0
+	config = 4
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP5
+	repeat = 0
+	config = 5
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP6
+	repeat = 0
+	config = 6
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP7
+	repeat = 0
+	config = 7
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP8
+	repeat = 0
+	config = 8
+end
+
+begin
+	prog = mythradio
+	button = KEY_KP9
+	repeat = 0
+	config = 9
+end
+
+
