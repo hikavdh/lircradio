@@ -29,11 +29,6 @@ try:
 except:
     from subprocess import *
 try:
-    import alsaaudio
-except:
-    print 'You need to install the pyalsaaudio module'
-    sys.exit(2)
-try:
     from radioFunctions import log
     from radioFunctions import config as rfconf
     from radioFunctions import RadioFunctions as rfcalls
@@ -132,11 +127,11 @@ class Configure:
                 self.opt_dict['radio_out'] = self.radio_devs[0]['radio_out']
                 self.opt_dict['video_device'] =self.radio_devs[0]['video_device']
 
-        self.opt_dict['audio_card'] = alsaaudio.cards()[0]
-        if 'Front' in alsaaudio.mixers(0):
+        self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
+        if 'Front' in rfcalls().get_alsa_mixers(0):
             self.opt_dict['audio_mixer'] = 'Front'
         else:
-            self.opt_dict['audio_mixer'] = alsaaudio.mixers(0)[0]
+            self.opt_dict['audio_mixer'] = rfcalls().get_alsa_mixers(0, 0)
         self.opt_dict['aplay_pcm'] = u'front:CARD=CA0106'
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
@@ -745,7 +740,7 @@ class Configure:
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
             else:
-                if not self.opt_dict['radio_out'] in alsaaudio.cards():
+                if not self.opt_dict['radio_out'] in rfcalls().get_alsa_cards():
                     log('%s is not a recognised audiocard. Disabling radio\n' % (self.opt_dict['radio_out']), 1)
                     self.opt_dict['radio_cardtype'] = None
                     self.opt_dict['radio_device'] = None
@@ -759,28 +754,28 @@ class Configure:
             self.opt_dict['video_device'] = None
 
         if self.args.audio_card != None:
-            if self.args.audio_card in alsaaudio.cards():
+            if self.args.audio_card in rfcalls().get_alsa_cards():
                 self.opt_dict['audio_card'] = self.args.audio_card
 
             else:
                 log('%s is not a recognised audiocard' % self.args.audio_card, 1)
 
-        if not self.opt_dict['audio_card'] in alsaaudio.cards():
+        if not self.opt_dict['audio_card'] in rfcalls().get_alsa_cards():
             log('%s is not a recognised audiocard' % self.opt_dict['audio_card'], 1)
-            self.opt_dict['audio_card'] = alsaaudio.cards()[0]
+            self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
 
         cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
 
         if self.args.audio_mixer != None:
-            if self.args.audio_mixer in alsaaudio.mixers(cardid):
+            if self.args.audio_mixer in rfcalls().get_alsa_mixers(cardid):
                 self.opt_dict['audio_mixer'] = self.args.audio_mixer
 
             else:
                 log('%s is not a recognised audiomixer' % self.args.audio_mixer, 1)
 
-        if not self.opt_dict['audio_mixer'] in alsaaudio.mixers(cardid):
+        if not self.opt_dict['audio_mixer'] in rfcalls().get_alsa_mixers(cardid):
             log('%s is not a recognised audiomixer' % self.opt_dict['audio_mixer'], 1)
-            self.opt_dict['audio_card'] = alsaaudio.mixers(cardid)[0]
+            self.opt_dict['audio_card'] = rfcalls().get_alsa_mixers(cardid, 0)
 
 
         #~ self.opt_dict['aplay_pcm']
@@ -881,7 +876,7 @@ class Configure:
                 video_devs.append(f)
 
         audio_cards = {}
-        for id in range(len(alsaaudio.cards())):
+        for id in range(len(rfcalls().get_alsa_cards())):
             audio_cards[id] = rfcalls().query_udev_path(u'/dev/snd/controlC%s' % id, 'sound')
 
         self.radio_devs = []
@@ -909,9 +904,9 @@ class Configure:
                     self.radio_devs.append(radio_card)
                     continue
 
-                for id in range(len(alsaaudio.cards())):
+                for id in range(len(rfcalls().get_alsa_cards())):
                     if audio_cards[id] == radio_card['udevpath']:
-                        radio_card['radio_out'] = alsaaudio.cards()[id]
+                        radio_card['radio_out'] = rfcalls().get_alsa_cards(id)
                         radio_card['radio_cardtype'] = 1
                         break
 

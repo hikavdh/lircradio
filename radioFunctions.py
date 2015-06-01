@@ -6,25 +6,24 @@ description_text = """
 """
 
 import sys, io, os, datetime, time, random
-import re, codecs, locale, argparse, pwd
-import socket, urllib2, sys, alsaaudio
+import re, codecs, locale, pwd
+import socket, urllib2, sys
 from urllib2   import urlopen
 from stat import *
 from xml.etree import cElementTree as ET
 from threading import Thread
 try:
+    import alsaaudio
+    disable_alsa = False
+except:
+    print 'You need to install the pyalsaaudio module\n'
+    print 'Alsa support will be disabled\n'
+    disable_alsa = True
+
+try:
     from subprocess32 import *
 except:
     from subprocess import *
-
-# check Python version
-if sys.version_info[:2] < (2,6):
-    sys.stderr.write("lircradio requires Pyton 2.6 or higher\n")
-    sys.exit(2)
-
-elif sys.version_info[:2] >= (3,0):
-    sys.stderr.write("lircradio does not yet support Pyton 3 or higher.\nExpect errors while we proceed\n")
-
 
 class FunctionConfig:
 
@@ -93,20 +92,37 @@ class FunctionConfig:
 
     # end version()
 
+    def retrieve_value(self, name, default):
+        # Retrieve old values
+        if os.access('%s/%s' % (self.ivtv_dir, name), os.F_OK):
+            f = io.open('%s/%s' % (self.ivtv_dir, name), 'rb')
+            value = re.sub('\n','', f.readline()).strip()
+            f.close()
+            return value
+
+        return default
+
+    # end retrieve_value()
+
+    def save_value(self, name, value):
+        # save a value for later
+        if os.access('%s/%s' % (self.ivtv_dir, name), os.F_OK) and not os.access('%s/%s' % (self.ivtv_dir, name), os.W_OK):
+            log('Can not save %s/%s. Check access rights' % (self.ivtv_dir, name) )
+
+        try:
+            f = io.open('%s/%s' % (self.ivtv_dir, name), 'wb')
+            f.write('%s\n' % value)
+            f.close()
+
+        except:
+            log('Can not save %s/%s. Check access rights' % (self.ivtv_dir, name) )
+
+    # end save_value()
+
     def check_dependencies(self, ivtv_dir):
 
-        def retrieve_value(name, default):
-            # Retrieve old values
-            if os.access('%s/%s' % (self.ivtv_dir, name), os.F_OK):
-                f = io.open('%s/%s' % (self.ivtv_dir, name), 'rb')
-                value = re.sub('\n','', f.readline()).strip()
-                f.close()
-                return value
-
-            return default
-
         self.ivtv_dir = ivtv_dir
-        self.active_channel = int(retrieve_value('LastChannel', 1))
+        self.active_channel = int(self.retrieve_value('LastChannel', 1))
 
         self.poweroff = "/sbin/poweroff"
         self.reboot = "/sbin/reboot"
@@ -193,6 +209,9 @@ class FunctionConfig:
 
     def get_alsa(self):
 
+        if disable_alsa:
+            return
+
         for cid in range(len(alsaaudio.cards())):
             self.alsa_names[alsaaudio.cards()[cid]] = cid
             self.alsa_cards[cid] = {}
@@ -264,6 +283,10 @@ class FunctionConfig:
     # end get_alsa()
 
     def set_mixer(self):
+
+        if disable_alsa:
+            return False
+
         if self.mixer != None:
             return True
 
@@ -359,6 +382,10 @@ def log(message, log_level = 1, log_target = 3):
 class AudioPCM(Thread):
 
     def __init__(self, card = None, capture = False):
+
+        if disable_alsa:
+            return
+
         Thread.__init__(self)
         self.quit = False
         if card == None:
@@ -370,6 +397,10 @@ class AudioPCM(Thread):
         self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card=self.card)
 
     def run(self):
+
+        if disable_alsa:
+            return
+
         if config.opt_dict['radio_cardtype'] == 0:
             log('Starting Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
             out = io.open(config.opt_dict['radio_out'], 'rb')
@@ -585,6 +616,10 @@ class RadioFunctions:
 
     def start_radio(self):
         log('Executing start_radio', 32)
+        if disable_alsa:
+            log('Alsa support disabled. Install the pyalsaaudio module')
+            return
+
         tunerstatus =  self.query_tuner()
         if tunerstatus > 0:
             log('MythTV is using the tuner!')
@@ -604,6 +639,8 @@ class RadioFunctions:
             try:
                 config.play_pcm = AudioPCM()
                 config.play_pcm.start()
+                config.mixer.setvolume(config.retrieve_value('RadioVolume',70))
+                config.mixer.setmute(0)
 
             except:
                 log('Error: %s Starting Playback' % (sys.exc_info()[1]))
@@ -618,6 +655,10 @@ class RadioFunctions:
 
     def stop_radio(self):
         log('Executing stop_radio', 32)
+        if disable_alsa:
+            log('Alsa support disabled. Install the pyalsaaudio module')
+            return
+
         if config.play_pcm != None:
             config.play_pcm.quit = True
             config.play_pcm = None
@@ -691,6 +732,7 @@ class RadioFunctions:
             log('Setting frequency for %s to %3.1f MHz(%s)' % (config.opt_dict['radio_device'], chanid['frequency'], chanid['title']), 8)
             check_call([config.v4l2_ctl, '--device=%s' % config.opt_dict['radio_device'], '--set-freq=%s' % chanid['frequency']])
             config.active_channel = config.new_channel
+            config.save_value('LastChannel', config.active_channel)
 
         except:
             log('Error setting frequency for %s' % config.opt_dict['radio_device'])
@@ -717,7 +759,35 @@ class RadioFunctions:
 
     # end tune_tv()
 
+    def get_alsa_cards(self, cardid = None):
+        if disable_alsa:
+            return
+
+        if cardid == None:
+            return alsaaudio.cards()
+
+        elif cardid < len(alsaaudio.cards()):
+            return alsaaudio.cards()[cardid]
+
+    # end get_alsa_cards()
+
+    def get_alsa_mixers(self, cardid = 0, mixerid = None):
+        if disable_alsa:
+            return
+
+        if cardid < len(alsaaudio.cards()):
+            if mixerid == None:
+                return alsaaudio.mixers(cardid)
+
+            elif mixerid in alsaaudio.mixers(cardid):
+                return alsaaudio.mixers(cardid)[mixerid]
+
+    # end get_alsa_mixers()
+
     def get_cardid(self, audiocard = None):
+        if disable_alsa:
+            return
+
         if audiocard == None:
             audiocard = config.opt_dict['audio_card']
 
@@ -729,6 +799,8 @@ class RadioFunctions:
     # end get_cardid()
 
     def get_volume(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True):
+        if disable_alsa:
+            return
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume('playback')
@@ -741,18 +813,24 @@ class RadioFunctions:
     # end get_volume()
 
     def set_volume(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True, volume = 0):
+        if disable_alsa:
+            return
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             log('Setting playbackvolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'playback')
+            config.save_value('%s_%s_Volume' % (config.alsa_cards[cardnr]['name'], mixer_ctrl),volume)
 
         elif (not playback) and 'capture' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             log('Setting capturevolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
             alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'capture')
+            config.save_value('%s_%s_Volume' % (config.alsa_cards[cardnr]['name'], mixer_ctrl),volume)
 
     # end set_volume()
 
     def get_mute(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True):
+        if disable_alsa:
+            return
 
         if playback and 'mute' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getrec()
@@ -765,6 +843,9 @@ class RadioFunctions:
     # end get_mute()
 
     def set_mute(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True, muteval = True):
+        if disable_alsa:
+            return
+
         if muteval:
             val = 1
 
@@ -783,34 +864,51 @@ class RadioFunctions:
 
     def radio_volume_up(self):
         log('Executing radio_volume_up', 32)
+        if disable_alsa:
+            return
+
         vol_list = config.mixer.getvolume()
-        vol = avarage(vol_list)
+        vol = 0
+        for v in vol_list:
+            vol += v
+        vol = vol/len(vol_list)
         vol += 5
         if vol > 100:
             vol = 100
 
         log('Setting playbackvolume for %s on %s to %s.' % (config.opt_dict['audio_mixer'], config.opt_dict['audio_card'], vol), 16)
         config.mixer.setvolume(vol)
+        config.save_value('RadioVolume',vol)
         return
 
     # end radio_volume_up()
 
     def radio_volume_down(self):
         log('Executing radio_volume_down', 32)
+        if disable_alsa:
+            return
+
         vol_list = config.mixer.getvolume()
-        vol = avarage(vol_list)
+        vol = 0
+        for v in vol_list:
+            vol += v
+        vol = vol/len(vol_list)
         vol -= 5
         if vol < 0:
             vol = 0
 
         log('Setting playbackvolume for %s on %s to %s.' % (config.opt_dict['audio_mixer'], config.opt_dict['audio_card'], vol), 16)
         config.mixer.setvolume(vol)
+        config.save_value('RadioVolume',vol)
         return
 
     # end radio_volume_down()
 
     def toggle_radio_mute(self):
         log('Executing toggle_radio_mute', 32)
+        if disable_alsa:
+            return
+
         mute = config.mixer.getmute()[0]
         mute = 1 - mute
         log('%s playbackvolume for %s on %s.' % (config.mutetext[mute], config.opt_dict['audio_mixer'], config.opt_dict['audio_card']), 16)
