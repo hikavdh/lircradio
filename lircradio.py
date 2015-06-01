@@ -56,7 +56,7 @@ class Configure:
         self.name ='lircradio.py'
         self.major = 0
         self.minor = 1
-        self.patch = 0
+        self.patch = 1
         self.beta = True
 
         self.write_info_files = False
@@ -130,9 +130,10 @@ class Configure:
         self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
         if 'Front' in rfcalls().get_alsa_mixers(0):
             self.opt_dict['audio_mixer'] = 'Front'
+
         else:
             self.opt_dict['audio_mixer'] = rfcalls().get_alsa_mixers(0, 0)
-        self.opt_dict['aplay_pcm'] = u'front:CARD=CA0106'
+        self.bash_commands = {}
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
         self.__CONFIG_SECTIONS__ = { 1: u'Configuration', \
@@ -514,6 +515,8 @@ class Configure:
                                 if word_cmd != '':
                                     self.external_commands[unicode(a[0].strip())].append(word_cmd)
                                     word_cmd = ''
+                        elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
+                            bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
                         else:
                             log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
 
@@ -538,7 +541,7 @@ class Configure:
             # There are no channels so looking for an old ~\.ivtv\radioFrequencies file
             if not self.read_radioFrequencies_File():
                 # We scan for frequencies
-                self.detect_channels()
+                self.freq_list = rfcalls().detect_channels(config.opt_dict['radio_device'])
                 if len(self.freq_list) == 0:
                     return False
 
@@ -741,7 +744,7 @@ class Configure:
 
             else:
                 if not self.opt_dict['radio_out'] in rfcalls().get_alsa_cards():
-                    log('%s is not a recognised audiocard. Disabling radio\n' % (self.opt_dict['radio_out']), 1)
+                    log('%s is not a recognized audiocard. Disabling radio\n' % (self.opt_dict['radio_out']), 1)
                     self.opt_dict['radio_cardtype'] = None
                     self.opt_dict['radio_device'] = None
                     self.opt_dict['video_device'] = None
@@ -758,10 +761,10 @@ class Configure:
                 self.opt_dict['audio_card'] = self.args.audio_card
 
             else:
-                log('%s is not a recognised audiocard' % self.args.audio_card, 1)
+                log('%s is not a recognized audiocard\n' % self.args.audio_card, 1)
 
         if not self.opt_dict['audio_card'] in rfcalls().get_alsa_cards():
-            log('%s is not a recognised audiocard' % self.opt_dict['audio_card'], 1)
+            log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
             self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
 
         cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
@@ -771,10 +774,10 @@ class Configure:
                 self.opt_dict['audio_mixer'] = self.args.audio_mixer
 
             else:
-                log('%s is not a recognised audiomixer' % self.args.audio_mixer, 1)
+                log('%s is not a recognized audiomixer]n' % self.args.audio_mixer, 1)
 
         if not self.opt_dict['audio_mixer'] in rfcalls().get_alsa_mixers(cardid):
-            log('%s is not a recognised audiomixer' % self.opt_dict['audio_mixer'], 1)
+            log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
             self.opt_dict['audio_card'] = rfcalls().get_alsa_mixers(cardid, 0)
 
 
@@ -918,19 +921,6 @@ class Configure:
 
     # end detect_radiodevice()
 
-    def detect_channels(self):
-        self.freq_list = []
-        freq_list = check_output(["/usr/bin/ivtv-radio", '-d', config.opt_dict['radio_device'], '-s'])
-        freq_list = re.split('\n',freq_list)
-        for freq in freq_list:
-            if freq == '':
-                continue
-
-            freq = re.split(' ', freq)
-            self.freq_list.append(float(freq[1]))
-
-    # end detect_channels()
-
     def write_opts_to_log(self):
         """
         Save the the used options to the logfile
@@ -955,7 +945,6 @@ class Configure:
         log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
         log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
         log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
-        log(u'aplay_pcm = %s\n' % self.opt_dict['aplay_pcm'], 1, 2)
         log(u'',1, 2)
 
     # end write_opts_to_log()
@@ -1002,10 +991,11 @@ class Configure:
         f.write(u'# 32 = log all radiofunction calls, Mainly for debugging\n')
         f.write(u'log_file = %s\n' % rfconf.log_file)
         f.write(u'log_level = %s\n' % rfconf.log_level)
-        f.write(u'\n')
         f.write(u'verbose = %s\n' % self.opt_dict['verbose'])
+        f.write(u'\n')
         f.write(u'fifo_file = %s\n' % self.opt_dict['fifo_file'])
         f.write(u'lirc_id = %s\n' % self.opt_dict['lirc_id'])
+        f.write(u'\n')
         f.write(u'# radio_cardtype can be any of four values \n')
         f.write(u'# 0 = ivtv (with /dev/video24 as radio-out)\n')
         f.write(u'# 1 = with corresponding alsa device as radio-out\n')
@@ -1020,7 +1010,6 @@ class Configure:
         f.write(u'myth_backend = %s\n' % self.opt_dict['myth_backend'])
         f.write(u'audio_card = %s\n' % self.opt_dict['audio_card'])
         f.write(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'])
-        f.write(u'aplay_pcm = %s\n' % self.opt_dict['aplay_pcm'])
         #f.write(u' = %s\n' % self.opt_dict[''])
         f.write(u'\n')
 
@@ -1079,7 +1068,7 @@ class Configure:
                 return True
 
         if add_channels:
-            self.detect_channels()
+            self.freq_list = rfcalls().detect_channels(config.opt_dict['radio_device'])
             ch_num = 0
             for c in rfconf.channels.itervalues():
                 ch_num += 1
@@ -1119,13 +1108,22 @@ class Configure:
         f.write(u'# Available internal commands are: PowerOff, Reboot, Hibernate, Suspend\n')
         f.write(u'#   PlayRadio, StopRadio, ToggleStartStop, ChannelUp, ChannelDown, \n')
         f.write(u'#   VolumeUp, VolumeDown, Mute, CreateMythfmMenu \n')
+        f.write(u'# The first four are handled in the bash script: `~/.ivtv/Commands.sh`\n')
+        f.write(u'# You can also move that script for global access to `/usr/bin`\n')
         f.write(u'# Numerical commands you can not set here, they are always translated to\n')
         f.write(u'# a channelchange.\n')
         f.write(u'\n')
+        f.write(u'# You can add command sequences to `~/.ivtv/Commands.sh`. You then\n')
+        f.write(u'# precede the command with COMMAND: \n')
+        f.write(u'# <lirc/fifo-command> = COMMAND:<~/.ivtv/Commands.sh-command>\n')
+        f.write(u'# test = COMMAND:suspend\n')
+        f.write(u'# The example will call the suspend command in there and is the same as: \n')
+        f.write(u'# test = Suspend\n')
+        f.write(u'\n')
         f.write(u'# You can also specify an external command or script by preceding the\n')
-        f.write(u'# command with BASH: You have to give a full path.\n')
+        f.write(u'# command with BASH: You best supply a full path.\n')
         f.write(u'# <lirc/fifo-command> = BASH:<external-command>\n')
-        f.write(u'# test = BASH:echo Testing the pipe\n')
+        f.write(u'# test = BASH:echo "Testing the pipe"\n')
         f.write(u'# Quotes are only needed if required by the command itself and then only\n')
         f.write(u'# use double quotes\n')
         f.write(u'\n')
@@ -1146,6 +1144,7 @@ class Configure:
                 else:
                     line = u'%s %s' % (line, cc)
 
+            line = re.sub('\n', '', line)
             f.write(line)
 
         f.close()
@@ -1215,6 +1214,11 @@ class Listen_To(Thread):
                 elif byteline.strip() in rfconf.functioncalls.keys():
                     log('%s command received.' % byteline, 2)
                     rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
+                    byteline = ''
+
+                elif byteline.strip() in config.bash_commands.keys():
+                    log('%s command received.' % byteline, 2)
+                    rfcalls().rf_function_call('Command', rfconf.functioncalls[byteline.strip()])
                     byteline = ''
 
                 elif byteline.strip() in config.external_commands.keys():

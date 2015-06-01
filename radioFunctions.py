@@ -13,14 +13,6 @@ from stat import *
 from xml.etree import cElementTree as ET
 from threading import Thread
 try:
-    import alsaaudio
-    disable_alsa = False
-except:
-    print 'You need to install the pyalsaaudio module\n'
-    print 'Alsa support will be disabled\n'
-    disable_alsa = True
-
-try:
     from subprocess32 import *
 except:
     from subprocess import *
@@ -31,7 +23,7 @@ class FunctionConfig:
         self.name = 'radioFunctions.py'
         self.major = 0
         self.minor = 1
-        self.patch = 0
+        self.patch = 1
         self.beta = True
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',
@@ -66,6 +58,16 @@ class FunctionConfig:
         self.log_level = 1
         self.log_file = ''
         self.log_output = None
+
+        self.disable_alsa = False
+        self.disable_radio = False
+        try:
+            global alsaaudio
+            import alsaaudio
+        except:
+            print 'You need to install the pyalsaaudio module\n'
+            print 'Alsa (and radio) support will be disabled\n'
+            self.disable_alsa = True
 
         self.alsa_cards = {}
         self.alsa_names = {}
@@ -121,19 +123,49 @@ class FunctionConfig:
 
     def check_dependencies(self, ivtv_dir):
 
+        def check_path(name, use_sudo = False):
+            if use_sudo:
+                try:
+                    path = check_output(['sudo', 'which', name], stderr = None)
+                    return re.sub('\n', '',path)
+
+                except:
+                    log('%s not Found!\n' % (name))
+                    return None
+
+            else:
+                try:
+                    path = check_output(['which', name], stderr = None)
+                    return re.sub('\n', '',path)
+
+                except:
+                    log('%s not Found!\n' % (name))
+                    return None
+
         self.ivtv_dir = ivtv_dir
         self.active_channel = int(self.retrieve_value('LastChannel', 1))
 
-        self.poweroff = "/sbin/poweroff"
-        self.reboot = "/sbin/reboot"
-        self.hibernate_ram = "/usr/sbin/hibernate-ram"
-        self.hibernate = "/usr/sbin/hibernate"
-        self.pm_suspend = "/usr/sbin/pm-suspend"
-        self.pm_hibernate = "/usr/sbin/pm-hibernate"
-        self.udevadm = "/bin/udevadm"
-        self.ivtv_radio = "/usr/bin/ivtv-radio"
-        self.ivtv_tune = "/usr/bin/ivtv-tune"
-        self.v4l2_ctl = "/usr/bin/v4l2-ctl"
+        self.udevadm = check_path("udevadm")
+        self.ivtv_radio = check_path("ivtv-radio")
+        self.ivtv_tune = check_path("ivtv-tune")
+        self.v4l2_ctl = check_path("v4l2-ctl")
+        if not self.disable_alsa:
+            if self.udevadm == None:
+                log('I can not find udevadm, so unable to identify devices.\n')
+                log('Disabling both alsa and radiofunctionality.\n')
+                self.disable_alsa = True
+
+            elif self.ivtv_radio == None or self.ivtv_tune == None or self.v4l2_ctl == None:
+                log('I can not find ivtv-tools and/or v4l-tools, so unable to play radio.\n')
+                log('Disabling radiofunctionality.\n')
+                self.disable_radio = True
+
+        poweroff = check_path("poweroff", True)
+        reboot = check_path("reboot", True)
+        hibernate_ram = check_path("hibernate-ram", True)
+        hibernate = check_path("hibernate", True)
+        pm_suspend = check_path("pm-suspend", True)
+        pm_hibernate =check_path("pm-hibernate", True)
 
         # Checking for the presence of Commands.sh
         if os.access(self.ivtv_dir + '/Commands.sh', os.F_OK):
@@ -154,48 +186,48 @@ class FunctionConfig:
             f.write('case $Command in\n')
             f.write('    "poweroff")\n')
             f.write('    # The command to execute on poweroff\n')
-            if os.access(self.poweroff, os.X_OK):
-                f.write('    sudo %s\n' % self.poweroff)
+            if poweroff != None:
+                f.write('    sudo %s\n' % poweroff)
 
             else:
-                f.write('#    sudo %s\n' % self.poweroff)
+                f.write('#    sudo poweroff\n')
 
             f.write('    ;;\n')
             f.write('    "reboot")\n')
             f.write('    # The command to execute on reboot\n')
-            if os.access(self.reboot, os.X_OK):
-                f.write('    sudo %s\n' % self.reboot)
+            if reboot != None:
+                f.write('    sudo %s\n' % reboot)
 
             else:
-                f.write('#    sudo %s\n' % self.reboot)
+                f.write('#    sudo reboot\n')
 
             f.write('    ;;\n')
             f.write('    "suspend")\n')
             f.write('    # The command to execute on suspend\n')
-            if os.access(self.hibernate_ram, os.X_OK):
-                f.write('    sudo %s\n' % self.hibernate_ram)
-                if os.access(self.pm_suspend, os.X_OK):
-                    f.write('#    sudo %s\n' % self.pm_suspend)
+            if hibernate_ram != None:
+                f.write('    sudo %s\n' % hibernate_ram)
+                if pm_suspend != None:
+                    f.write('#    sudo %s\n' % pm_suspend)
 
-            elif os.access(self.pm_suspend, os.X_OK):
-                f.write('    sudo %s\n' % self.pm_suspend)
+            elif pm_suspend != None:
+                f.write('    sudo %s\n' % pm_suspend)
 
             else:
-                f.write('#    sudo %s\n' % self.pm_suspend)
+                f.write('#    sudo pm_suspend\n')
 
             f.write('    ;;\n')
             f.write('    "hibernate")\n')
             f.write('    # The command to execute on hibernate\n')
-            if os.access(self.hibernate, os.X_OK):
-                f.write('    sudo %s\n' % self.hibernate)
-                if os.access(self.pm_hibernate, os.X_OK):
-                    f.write('#    sudo %s\n' % self.pm_hibernate)
+            if hibernate != None:
+                f.write('    sudo %s\n' % hibernate)
+                if pm_hibernate != None:
+                    f.write('#    sudo %s\n' % pm_hibernate)
 
-            elif os.access(self.pm_hibernate, os.X_OK):
-                f.write('    sudo %s\n' % self.pm_hibernate)
+            elif pm_hibernate != None:
+                f.write('    sudo %s\n' % pm_hibernate)
 
             else:
-                f.write('#    sudo %s\n' % self.pm_hibernate)
+                f.write('#    sudo pm_hibernate\n')
 
             f.write('    ;;\n')
             f.write('esac   \n')
@@ -209,7 +241,7 @@ class FunctionConfig:
 
     def get_alsa(self):
 
-        if disable_alsa:
+        if self.disable_alsa:
             return
 
         for cid in range(len(alsaaudio.cards())):
@@ -284,7 +316,7 @@ class FunctionConfig:
 
     def set_mixer(self):
 
-        if disable_alsa:
+        if self.disable_alsa:
             return False
 
         if self.mixer != None:
@@ -383,7 +415,7 @@ class AudioPCM(Thread):
 
     def __init__(self, card = None, capture = False):
 
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         Thread.__init__(self)
@@ -398,7 +430,7 @@ class AudioPCM(Thread):
 
     def run(self):
 
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if config.opt_dict['radio_cardtype'] == 0:
@@ -426,8 +458,12 @@ class RadioFunctions:
     """
     All functions to manipulate the radio and others
     """
-    def rf_function_call(self, rf_call_id):
-        if rf_call_id == 'PowerOff'and config.command_name != None:
+    def rf_function_call(self, rf_call_id, command = None):
+        if rf_call_id == 'Command'and config.command_name != None and command != None:
+            log('Executing %s %s' % (config.command_name, command), 32)
+            call([config.command_name, command])
+
+        elif rf_call_id == 'PowerOff'and config.command_name != None:
             log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
             call([config.command_name,'poweroff'])
 
@@ -546,7 +582,7 @@ class RadioFunctions:
 
     def query_udev_path(self, device, enddir = None):
 
-        if not os.access(device, os.F_OK):
+        if not os.access(device, os.F_OK) or config.udevadm == None:
             return None
 
         if not device[:5] == '/dev/':
@@ -616,7 +652,7 @@ class RadioFunctions:
 
     def start_radio(self):
         log('Executing start_radio', 32)
-        if disable_alsa:
+        if config.disable_alsa or config.disable_radio:
             log('Alsa support disabled. Install the pyalsaaudio module')
             return
 
@@ -655,7 +691,7 @@ class RadioFunctions:
 
     def stop_radio(self):
         log('Executing stop_radio', 32)
-        if disable_alsa:
+        if config.disable_alsa or config.disable_radio:
             log('Alsa support disabled. Install the pyalsaaudio module')
             return
 
@@ -709,6 +745,10 @@ class RadioFunctions:
     # end channel_down()
 
     def get_active_frequency(self):
+        if config.disable_radio:
+            log('Radio support disabled. Install the ivtv/v4l Utilities')
+            return
+
         try:
             freq = check_output([config.v4l2_ctl, '--device=%s' % config.opt_dict['radio_device'], '--get-freq'])
             freq = re.search('.*?\((.*?) MHz', freq)
@@ -724,6 +764,10 @@ class RadioFunctions:
     # end get_active_frequency()
 
     def set_channel(self):
+        if config.disable_radio:
+            log('Radio support disabled. Install the ivtv/v4l Utilities')
+            return
+
         if config.active_channel == config.new_channel:
             return
 
@@ -740,6 +784,10 @@ class RadioFunctions:
     # end set_channel()
 
     def tune_tv(self, frequency):
+        if config.disable_radio:
+            log('Radio support disabled. Install the ivtv/v4l Utilities')
+            return
+
         tunerstatus =  query_tuner()
         if tunerstatus < 0:
             return
@@ -759,8 +807,33 @@ class RadioFunctions:
 
     # end tune_tv()
 
+    def detect_channels(self, radio_dev = None):
+        if config.disable_radio:
+            return
+
+        freq_list = []
+        if radio_dev == None and 'radio_device' in config.opt_dict:
+            radio_dev = config.opt_dict['radio_device']
+
+        try:
+            read_list = check_output([config.ivtv_radio, '-d', radio_dev, '-s'])
+            read_list = re.split('\n',read_list)
+            for freq in read_list:
+                if freq == '':
+                    continue
+
+                freq = re.split(' ', freq)
+                freq_list.append(float(freq[1]))
+
+            return freq_list
+
+        except:
+            return
+
+    # end detect_channels()
+
     def get_alsa_cards(self, cardid = None):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if cardid == None:
@@ -772,7 +845,7 @@ class RadioFunctions:
     # end get_alsa_cards()
 
     def get_alsa_mixers(self, cardid = 0, mixerid = None):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if cardid < len(alsaaudio.cards()):
@@ -785,7 +858,7 @@ class RadioFunctions:
     # end get_alsa_mixers()
 
     def get_cardid(self, audiocard = None):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if audiocard == None:
@@ -799,7 +872,7 @@ class RadioFunctions:
     # end get_cardid()
 
     def get_volume(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
@@ -813,7 +886,7 @@ class RadioFunctions:
     # end get_volume()
 
     def set_volume(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True, volume = 0):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
@@ -829,7 +902,7 @@ class RadioFunctions:
     # end set_volume()
 
     def get_mute(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if playback and 'mute' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
@@ -843,7 +916,7 @@ class RadioFunctions:
     # end get_mute()
 
     def set_mute(self, cardnr = 0, mixer_ctrl = 'Master', id = 0, playback = True, muteval = True):
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         if muteval:
@@ -864,7 +937,7 @@ class RadioFunctions:
 
     def radio_volume_up(self):
         log('Executing radio_volume_up', 32)
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         vol_list = config.mixer.getvolume()
@@ -885,7 +958,7 @@ class RadioFunctions:
 
     def radio_volume_down(self):
         log('Executing radio_volume_down', 32)
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         vol_list = config.mixer.getvolume()
@@ -906,7 +979,7 @@ class RadioFunctions:
 
     def toggle_radio_mute(self):
         log('Executing toggle_radio_mute', 32)
-        if disable_alsa:
+        if config.disable_alsa:
             return
 
         mute = config.mixer.getmute()[0]
@@ -921,3 +994,4 @@ class RadioFunctions:
         log('Executing create_fm_menu_file', 32)
         pass
 # end RadioFunctions()
+
