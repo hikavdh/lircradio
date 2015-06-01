@@ -75,7 +75,7 @@ class FunctionConfig:
         self.active_channel = 1
         self.new_channel = 0
         self.radio_pid = None
-        self.aplay_pid = None
+        self.play_pcm = None
         self.mixer = None
         self.audio_out = None
 
@@ -115,7 +115,6 @@ class FunctionConfig:
         self.pm_suspend = "/usr/sbin/pm-suspend"
         self.pm_hibernate = "/usr/sbin/pm-hibernate"
         self.udevadm = "/bin/udevadm"
-        self.aplay = "/usr/bin/aplay"
         self.ivtv_radio = "/usr/bin/ivtv-radio"
         self.ivtv_tune = "/usr/bin/ivtv-tune"
         self.v4l2_ctl = "/usr/bin/v4l2-ctl"
@@ -322,11 +321,13 @@ class FunctionConfig:
         except:
             pass
 
-        if self.aplay_pid != None:
-            self.aplay_pid.kill()
+        if self.play_pcm != None:
+            self.play_pcm.quit = True
+            self.play_pcm = None
 
         if self.radio_pid != None:
             self.radio_pid.kill()
+            self.radio_pid = None
 
     # end close()
 
@@ -355,22 +356,38 @@ def log(message, log_level = 1, log_target = 3):
     config.rotate_log()
 # end log()
 
-class AudioPCM:
+class AudioPCM(Thread):
 
-    def __init__(self, cardnr = 0, capture = False):
+    def __init__(self, card = None, capture = False):
         Thread.__init__(self)
         self.quit = False
-        self.cardnr = cardnr
-        self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card=cardnr)
+        if card == None:
+            self.card = config.opt_dict['audio_card']
+
+        else:
+            self.card = card
+
+        self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card=self.card)
+
+    def run(self):
         if config.opt_dict['radio_cardtype'] == 0:
+            log('Starting Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+            out = io.open(config.opt_dict['radio_out'], 'rb')
+
             self.PCM.setformat(alsaaudio.PCM_FORMAT_S16_LE)
             self.PCM.setrate(48000)
-            setchannels(2)
+            self.PCM.setchannels(2)
+            self.PCM.setperiodsize(160)
 
-    def run():
-        while True:
-            if self.quit:
-                return
+            data = out.read(320)
+            while data:
+                self.PCM.write(data)
+                if self.quit:
+                    log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+                    out.close()
+                    return
+
+                data = out.read(320)
 
 # end AudioPCM()
 
@@ -585,12 +602,11 @@ class RadioFunctions:
 
         if config.opt_dict['radio_cardtype'] == 0:
             try:
-                config.audio_out = io.open(config.opt_dict['radio_out'], 'rb')
-                config.aplay_pid = Popen(stderr = config.log_output, stdin = config.audio_out, \
-                                args = [config.aplay, '--device=%s' % config.opt_dict['aplay_pcm'], '--format=dat'])
+                config.play_pcm = AudioPCM()
+                config.play_pcm.start()
 
             except:
-                log('Error: %s Starting %s' % (sys.exc_info()[1], config.aplay))
+                log('Error: %s Starting Playback' % (sys.exc_info()[1]))
 
         elif config.opt_dict['radio_cardtype'] == 1:
             pass
@@ -602,13 +618,9 @@ class RadioFunctions:
 
     def stop_radio(self):
         log('Executing stop_radio', 32)
-        if config.aplay_pid != None:
-            config.aplay_pid.terminate()
-            config.aplay_pid = None
-
-        if config.audio_out != None:
-            config.audio_out.close()
-            config.audio_out = None
+        if config.play_pcm != None:
+            config.play_pcm.quit = True
+            config.play_pcm = None
 
         if config.radio_pid != None:
             config.radio_pid.terminate()
