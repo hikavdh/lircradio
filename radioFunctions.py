@@ -852,7 +852,7 @@ class RadioFunctions:
             if mixerid == None:
                 return alsaaudio.mixers(cardid)
 
-            elif mixerid in alsaaudio.mixers(cardid):
+            elif mixerid < len(alsaaudio.mixers(cardid)):
                 return alsaaudio.mixers(cardid)[mixerid]
 
     # end get_alsa_mixers()

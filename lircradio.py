@@ -128,11 +128,14 @@ class Configure:
                 self.opt_dict['video_device'] =self.radio_devs[0]['video_device']
 
         self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
-        if 'Front' in rfcalls().get_alsa_mixers(0):
-            self.opt_dict['audio_mixer'] = 'Front'
+        for m in ('Front', 'Master', 'PCM'):
+            if m in rfcalls().get_alsa_mixers(0):
+                self.opt_dict['audio_mixer'] = m
+                break
 
         else:
             self.opt_dict['audio_mixer'] = rfcalls().get_alsa_mixers(0, 0)
+
         self.bash_commands = {}
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
@@ -1134,6 +1137,9 @@ class Configure:
         f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[3])
         for c, command in rfconf.functioncalls.items():
             f.write(u'%s = %s\n' % (c, command))
+
+        for c, command in self.bash_commands.items():
+            f.write(u'%s = COMMAND:%s\n' % (c, command))
 
         for c, command in self.external_commands.items():
             line = u'%s = BASH:' % c
