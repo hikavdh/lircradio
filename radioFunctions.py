@@ -23,7 +23,7 @@ class FunctionConfig:
         self.name = 'radioFunctions.py'
         self.major = 0
         self.minor = 1
-        self.patch = 1
+        self.patch = 2
         self.beta = True
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',

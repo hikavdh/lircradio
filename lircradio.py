@@ -56,7 +56,7 @@ class Configure:
         self.name ='lircradio.py'
         self.major = 0
         self.minor = 1
-        self.patch = 1
+        self.patch = 2
         self.beta = True
 
         self.write_info_files = False
