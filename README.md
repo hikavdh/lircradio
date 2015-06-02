@@ -1,6 +1,10 @@
 # lircradio
 A daemon script to pipe commands from lirc or from outside through ssh to for instance ivtv-radio or to suspend
 
+Check out the [Wiki](https://github.com/hikavdh/lircradio/wiki)  
+and a coresponding item on the [MythTV FM radio wiki page](https://www.mythtv.org/wiki/Fm_radio)  
+See my other projects at [tvgrabbers](https://github.com/tvgrabbers)
+
 ## Recuirements
 
  * Python 2.6 or 2.7
