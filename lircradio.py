@@ -56,7 +56,7 @@ class Configure:
         self.name ='lircradio.py'
         self.major = 0
         self.minor = 1
-        self.patch = 2
+        self.patch = 3
         self.beta = True
 
         self.write_info_files = False
@@ -647,6 +647,7 @@ class Configure:
             print(description_text)
             return(0)
 
+        conf_read = self.read_config()
         if self.args.list_alsa:
             print 'The available alsa audio-cards are:'
             for c in rfcalls().get_alsa_cards():
@@ -666,10 +667,9 @@ class Configure:
             return(0)
 
         if self.args.create_menu:
-            print 'To be implemented'
+            rfcalls().create_fm_menu_file(self.ivtv_dir, self.opt_dict['fifo_file'])
             return(0)
 
-        conf_read = self.read_config()
         if self.args.verbose != None:
             self.opt_dict['verbose'] = self.args.verbose
             rfconf.opt_dict['verbose'] = self.opt_dict['verbose']
@@ -1247,7 +1247,11 @@ class Listen_To(Thread):
 
                 elif byteline.strip() in rfconf.functioncalls.keys():
                     log('%s command received.' % byteline, 2)
-                    rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
+                    if rfconf.functioncalls[byteline.strip()] == 'CreateMythfmMenu':
+                        rfcalls().rf_function_call('CreateMythfmMenu', [config.ivtv_dir, config.opt_dict['fifo_file']])
+
+                    else
+                        rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
                     byteline = ''
 
                 elif byteline.strip() in config.bash_commands.keys():

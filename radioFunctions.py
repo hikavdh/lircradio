@@ -23,7 +23,7 @@ class FunctionConfig:
         self.name = 'radioFunctions.py'
         self.major = 0
         self.minor = 1
-        self.patch = 2
+        self.patch = 3
         self.beta = True
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',
@@ -508,7 +508,7 @@ class RadioFunctions:
             self.toggle_radio_mute()
 
         elif rf_call_id == 'CreateMythfmMenu':
-            self.create_fm_menu_file()
+            self.create_fm_menu_file(command[0], command[1])
 
     # end rf_function_call ()
 
@@ -990,8 +990,44 @@ class RadioFunctions:
 
     # end toggle_radio_mute()
 
-    def create_fm_menu_file(self):
+    def create_fm_menu_file(self, ivtv_dir, fifo):
         log('Executing create_fm_menu_file', 32)
-        pass
+        #~ if len(config.channels) == 0:
+            #~ return
+
+        file = '%s/fmmenu.xml' % ivtv_dir
+        try:
+            os.rename(file, file + '.old')
+        except:
+            pass
+
+        try:
+            f = io.open(file, 'w')
+
+            f.write(u'<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n')
+            f.write(u'<mythmenu name=\"FMMENU\">\n')
+            f.write(u'\n')
+            for c, channel in config.channels.items():
+                f.write(u'   <button>\n')
+                f.write(u'      <type>MUSIC</type>\n')
+                f.write(u'      <text>%s</text>\n' % (channel['title']))
+                f.write(u'      <action>EXEC echo "%s" > "%s"</action>\n' % (c, fifo))
+                f.write(u'   </button>\n')
+                f.write(u'\n')
+
+            f.write(u'   <button>\n')
+            f.write(u'      <type>MUSIC</type>\n')
+            f.write(u'      <text>Start/Stop de Radio</text>\n')
+            f.write(u'      <action>EXEC echo "start_stop_radio" > "%s"</action>\n' % (fifo))
+            f.write(u'   </button>\n')
+            f.write(u'\n')
+            f.write(u'</mythmenu>\n')
+            f.write(u'\n')
+
+            f.close()
+
+        except Exception as e:
+            log('failed to create menufile %s' % file)
+
 # end RadioFunctions()
 
