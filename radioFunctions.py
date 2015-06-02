@@ -809,7 +809,7 @@ class RadioFunctions:
 
     def detect_channels(self, radio_dev = None):
         if config.disable_radio:
-            return
+            return []
 
         freq_list = []
         if radio_dev == None and 'radio_device' in config.opt_dict:
@@ -828,7 +828,7 @@ class RadioFunctions:
             return freq_list
 
         except:
-            return
+            return []
 
     # end detect_channels()
 

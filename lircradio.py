@@ -350,6 +350,12 @@ class Configure:
                         metavar = '<mixername>',
                         help = 'The mixer name. (%s)\n' % self.opt_dict['audio_mixer'])
 
+        parser.add_argument('--list-alsa-cards', action = 'store_true', default = False, dest = 'list_alsa',
+                        help = 'Give a list of the alsa-audio cards on this system')
+
+        parser.add_argument('--list-mixers', action = 'store_true', default = False, dest = 'list_mixers',
+                        help = 'Give a list of the available mixer-controls for the given card')
+
         # Handle the sys.exit(0) exception on --help more gracefull
         try:
             self.args = parser.parse_args()
@@ -639,6 +645,24 @@ class Configure:
             print("The Netherlands (%s)" % self.version(True))
             print("The Netherlands (%s)" % rfconf.version(True))
             print(description_text)
+            return(0)
+
+        if self.args.list_alsa:
+            print 'The available alsa audio-cards are:'
+            for c in rfcalls().get_alsa_cards():
+                print '    %s' % c
+
+            return(0)
+
+        if self.args.list_mixers:
+            if self.args.audio_card != None and self.args.audio_card in rfcalls().get_alsa_cards():
+                self.opt_dict['audio_card'] = self.args.audio_card
+
+            cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
+            print 'The available mixer controls for audio-card: %s are:' % self.opt_dict['audio_card']
+            for m in rfcalls().get_alsa_mixers(cardid):
+                print '    %s' % m
+
             return(0)
 
         conf_read = self.read_config()
