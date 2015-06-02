@@ -305,10 +305,6 @@ class Configure:
                         help = 'save the currently defined options to the config file\n' +
                                     'add options to the command-line to adjust the file.')
 
-        parser.add_argument('-M', '--create-menu', action = 'store_true', default = False, dest = 'create_menu',
-                        help = 'create a Radiomenu file %s in %s\n' % (self.myth_menu_file, self.ivtv_dir) +
-                                    'with the defined channels to be used in MythTV.')
-
         parser.add_argument('-F', '--fifo-file', type = str, default = None, dest = 'fifo_file',
                         metavar = '<file>',
                         help = 'name of the fifo-file (%s)' % self.opt_dict['fifo_file'])
@@ -355,6 +351,10 @@ class Configure:
 
         parser.add_argument('--list-mixers', action = 'store_true', default = False, dest = 'list_mixers',
                         help = 'Give a list of the available mixer-controls for the given card')
+
+        parser.add_argument('-M', '--create-menu', action = 'store_true', default = False, dest = 'create_menu',
+                        help = 'create a Radiomenu file %s in %s\n' % (self.myth_menu_file, self.ivtv_dir) +
+                                    'with the defined channels to be used in MythTV.')
 
         # Handle the sys.exit(0) exception on --help more gracefull
         try:
@@ -663,6 +663,10 @@ class Configure:
             for m in rfcalls().get_alsa_mixers(cardid):
                 print '    %s' % m
 
+            return(0)
+
+        if self.args.create_menu:
+            print 'To be implemented'
             return(0)
 
         conf_read = self.read_config()
