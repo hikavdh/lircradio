@@ -1250,7 +1250,7 @@ class Listen_To(Thread):
                     if rfconf.functioncalls[byteline.strip()] == 'CreateMythfmMenu':
                         rfcalls().rf_function_call('CreateMythfmMenu', [config.ivtv_dir, config.opt_dict['fifo_file']])
 
-                    else
+                    else:
                         rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
                     byteline = ''
 

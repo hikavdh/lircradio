@@ -98,7 +98,7 @@ class FunctionConfig:
         # Retrieve old values
         if os.access('%s/%s' % (self.ivtv_dir, name), os.F_OK):
             f = io.open('%s/%s' % (self.ivtv_dir, name), 'rb')
-            value = re.sub('\n','', f.readline()).strip()
+            value = int(re.sub('\n','', f.readline()).strip())
             f.close()
             return value
 
@@ -473,10 +473,18 @@ class RadioFunctions:
 
         elif rf_call_id == 'Hibernate'and config.command_name != None:
             log('Executing %s %s' % (config.command_name, 'hibernate'), 32)
+            if config.play_pcm != None or config.radio_pid != None:
+                self.stop_radio()
+                time.sleep(1)
+
             call([config.command_name,'hibernate'])
 
         elif rf_call_id == 'Suspend'and config.command_name != None:
             log('Executing %s %s' % (config.command_name, 'suspend'), 32)
+            if config.play_pcm != None or config.radio_pid != None:
+                self.stop_radio()
+                time.sleep(1)
+
             call([config.command_name,'suspend'])
 
         elif rf_call_id == 'PlayRadio':
@@ -834,7 +842,7 @@ class RadioFunctions:
 
     def get_alsa_cards(self, cardid = None):
         if config.disable_alsa:
-            return
+            return []
 
         if cardid == None:
             return alsaaudio.cards()
@@ -846,7 +854,7 @@ class RadioFunctions:
 
     def get_alsa_mixers(self, cardid = 0, mixerid = None):
         if config.disable_alsa:
-            return
+            return []
 
         if cardid < len(alsaaudio.cards()):
             if mixerid == None:
@@ -859,7 +867,7 @@ class RadioFunctions:
 
     def get_cardid(self, audiocard = None):
         if config.disable_alsa:
-            return
+            return -1
 
         if audiocard == None:
             audiocard = config.opt_dict['audio_card']
