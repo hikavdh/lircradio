@@ -10,7 +10,7 @@ See my other projects at [tvgrabbers](https://github.com/tvgrabbers)
  * Python 2.6 or 2.7
  * Lirc
  * Alsa
- * [pyalsaaudio 0.7](http://sourceforge.net/projects/pyalsaaudio/) I don't think 0.8 will work at present. I saw changes in the interface
+ * [pyalsaaudio 0.7](http://sourceforge.net/projects/pyalsaaudio/) (0.8 has some changes in the interface, but it should work.)
  * [ivtv-utils](http://www.ivtvdriver.org/)
  * [v4l-utils](http://git.linuxtv.org/v4l-utils.git)
  * It also looks for either [pm-utils](http://pm-utils.freedesktop.org/) or the [TuxOnIce hibernate scripts](http://www.tuxonice.net/) for suspend/hibernate functionality 
