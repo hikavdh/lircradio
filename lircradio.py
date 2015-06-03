@@ -44,7 +44,7 @@ if sys.version_info[:2] < (2,6):
 elif sys.version_info[:2] >= (3,0):
     sys.stderr.write("lircradio does not support Pyton 3 or higher.\nExpect errors while we proceed\n")
 
-if rfconf.version()[:2] < (0,1):
+if rfconf.version()[:2] < (0,2):
     sys.stderr.write("lircradio requires radioFunctions 0.1 or higher\n")
     sys.exit(2)
 
@@ -55,8 +55,8 @@ class Configure:
 
         self.name ='lircradio.py'
         self.major = 0
-        self.minor = 1
-        self.patch = 3
+        self.minor = 2
+        self.patch = 0
         self.beta = True
 
         self.write_info_files = False
@@ -93,23 +93,35 @@ class Configure:
         self.myth_menu_file = 'fmmenu.xml'
         self.opt_dict['verbose'] = False
 
-        #self.opt_dict[''] =
+        # Initialising fifo variables
         self.opt_dict['fifo_file'] = u'/tmp/%s-fiforadio' % self.username
         self.opt_dict['lirc_id'] = u'lircradio'
         self.fifo_read = None
         self.fifo_write = None
         self.ircat_pid = None
+        self.bash_commands = {}
+        self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
+        # Initialising radio and audio
         self.dev_types = {}
         self.dev_types[0] = 'ivtv radio device'
         self.dev_types[1] = 'radio with alsa device'
         self.dev_types[2] = 'radio cabled to an audio card'
-        self.opt_dict['myth_backend'] = socket.gethostname()
+        self.opt_dict['myth_backend'] = None
         self.opt_dict['radio_cardtype'] = -1
         self.opt_dict['radio_device']  = None
         self.opt_dict['radio_out'] = None
-        self.opt_dict['video_device'] = None
+        self.opt_dict['source_switch'] = None
+        self.opt_dict['source'] = None
+        self.opt_dict['source_mixer'] = None
+
         rfconf.check_dependencies(self.ivtv_dir)
+        # Detecting radio and audio defaults
+        self.select_card = u'You have to set audio-card to where the tv-card is cabled to: ['
+        for a in rfcalls().get_alsa_cards():
+            self.select_card += u'%s, ' % a
+
+        self.select_card = self.select_card[0: -2] + u']'
         self.detect_radiodevice()
         if len(self.radio_devs) > 0:
             for card in self.radio_devs:
@@ -135,9 +147,6 @@ class Configure:
 
         else:
             self.opt_dict['audio_mixer'] = rfcalls().get_alsa_mixers(0, 0)
-
-        self.bash_commands = {}
-        self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
         self.__CONFIG_SECTIONS__ = { 1: u'Configuration', \
                                                             2: u'Radio Channels', \
@@ -436,7 +445,7 @@ class Configure:
                                 self.opt_dict[a[0].lower().strip()] = False
 
                         # Values that can be None
-                        elif a[0].lower().strip() in ('radio_device', 'radio_out', 'video_device', 'myth_backend'):
+                        elif a[0].lower().strip() in ('radio_device', 'radio_out', 'video_device', 'myth_backend','source_switch' , 'source','source_mixer'):
                             self.opt_dict[a[0].lower().strip()] = None if (len(a) == 1 or a[1].lower().strip() == 'none') else a[1].strip()
 
                         elif len(a) == 2:
@@ -701,7 +710,8 @@ class Configure:
             self.opt_dict['myth_backend'] = self.args.myth_backend
 
         if self.opt_dict['myth_backend'] == None:
-            self.opt_dict['myth_backend'] = socket.gethostname()
+            if rfcalls().query_backend(socket.gethostname()) != -2:
+                self.opt_dict['myth_backend'] = socket.gethostname()
 
         elif self.opt_dict['myth_backend'].lower().strip() == 'none':
             self.opt_dict['myth_backend'] = None
@@ -773,13 +783,8 @@ class Configure:
                     log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
-            else:
-                if not self.opt_dict['radio_out'] in rfcalls().get_alsa_cards():
-                    log('%s is not a recognized audiocard. Disabling radio\n' % (self.opt_dict['radio_out']), 1)
-                    self.opt_dict['radio_cardtype'] = None
-                    self.opt_dict['radio_device'] = None
-                    self.opt_dict['video_device'] = None
-                    self.opt_dict['radio_out'] = None
+            elif self.opt_dict['radio_cardtype'] == 2 and self.opt_dict['radio_out'] == self.select_card:
+                log(self.select_card)
 
         else:
             self.opt_dict['radio_cardtype'] = -1
@@ -811,9 +816,6 @@ class Configure:
             log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
             self.opt_dict['audio_card'] = rfcalls().get_alsa_mixers(cardid, 0)
 
-
-        #~ self.opt_dict['aplay_pcm']
-
         self.write_opts_to_log()
         if self.args.configure:
             if self.opt_dict['radio_device'] == None:
@@ -823,6 +825,9 @@ class Configure:
             else:
                 self.write_config(True)
                 return(0)
+
+        elif self.opt_dict['radio_out'] == self.select_card:
+            self.opt_dict['radio_out'] = None
 
         if self.args.save_options:
             self.write_config(False)
@@ -945,7 +950,7 @@ class Configure:
                         break
 
                 else:
-                    radio_card['radio_out'] = None
+                    radio_card['radio_out'] = self.select_card
                     radio_card['radio_cardtype'] = 2
 
                 self.radio_devs.append(radio_card)
@@ -976,6 +981,9 @@ class Configure:
         log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
         log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
         log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
+        log(u'source_switch = %s\n' % self.opt_dict['source_switch'], 1, 2)
+        log(u'source = %s\n' % self.opt_dict['source'], 1, 2)
+        #~ log(u'source_mixer = %s\n' % self.opt_dict['source_mixer'], 1, 2)
         log(u'',1, 2)
 
     # end write_opts_to_log()
@@ -1030,7 +1038,9 @@ class Configure:
         f.write(u'# radio_cardtype can be any of four values \n')
         f.write(u'# 0 = ivtv (with /dev/video24 as radio-out)\n')
         f.write(u'# 1 = with corresponding alsa device as radio-out\n')
-        f.write(u'# 2 = cabled to an audiocard set in radio-out\n')
+        f.write(u'# 2 = cabled to the audiocard set in audio_card\n')
+        f.write(u'#     You also have to set "source_switch" and "source"\n')
+        f.write(u'#     to the source select mixer and its value\n')
         f.write(u'# -1 = No radiocard\n')
         f.write(u'# All but the audiocard for type 2 will be autodetected\n')
         f.write(u'# It will default to the first detected ivtv-card or else any other.\n')
@@ -1041,6 +1051,9 @@ class Configure:
         f.write(u'myth_backend = %s\n' % self.opt_dict['myth_backend'])
         f.write(u'audio_card = %s\n' % self.opt_dict['audio_card'])
         f.write(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'])
+        f.write(u'source_switch = %s\n' % self.opt_dict['source_switch'])
+        f.write(u'source = %s\n' % self.opt_dict['source'])
+        #~ f.write(u'source_mixer = %s\n' % self.opt_dict['source_mixer'])
         #f.write(u' = %s\n' % self.opt_dict[''])
         f.write(u'\n')
 

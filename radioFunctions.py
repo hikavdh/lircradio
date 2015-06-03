@@ -22,8 +22,8 @@ class FunctionConfig:
     def __init__(self):
         self.name = 'radioFunctions.py'
         self.major = 0
-        self.minor = 1
-        self.patch = 3
+        self.minor = 2
+        self.patch = 0
         self.beta = True
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',
@@ -309,9 +309,6 @@ class FunctionConfig:
 
                     break
 
-            self.alsa_cards[cid]
-            self.alsa_cards[cid]
-
     # end get_alsa()
 
     def set_mixer(self):
@@ -370,19 +367,27 @@ class FunctionConfig:
 
     def close(self):
         # close everything neatly
-        try:
-            self.log_output.close()
-
-        except:
-            pass
-
         if self.play_pcm != None:
             self.play_pcm.quit = True
+            self.play_pcm.close()
             self.play_pcm = None
 
         if self.radio_pid != None:
             self.radio_pid.kill()
             self.radio_pid = None
+
+        self.mixer = None
+        for c in self.alsa_cards.values():
+            c['name'] = None
+            for m in c['mixers'].values():
+                for i in m.values():
+                    m['mixer'] = None
+
+        try:
+            self.log_output.close()
+
+        except:
+            pass
 
     # end close()
 
@@ -413,7 +418,7 @@ def log(message, log_level = 1, log_target = 3):
 
 class AudioPCM(Thread):
 
-    def __init__(self, card = None, capture = False):
+    def __init__(self, card = None, capture = None):
 
         if config.disable_alsa:
             return
@@ -426,31 +431,57 @@ class AudioPCM(Thread):
         else:
             self.card = card
 
-        self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card=self.card)
+        if capture == None:
+            self.capture = config.opt_dict['radio_out']
+
+        else:
+            self.capture = capture
 
     def run(self):
 
         if config.disable_alsa:
             return
 
+        log('Starting Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+
+        self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card = self.card)
+        self.PCM.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+        self.PCM.setrate(48000)
+        self.PCM.setchannels(2)
+        self.PCM.setperiodsize(160)
+
         if config.opt_dict['radio_cardtype'] == 0:
-            log('Starting Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
             out = io.open(config.opt_dict['radio_out'], 'rb')
-
-            self.PCM.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-            self.PCM.setrate(48000)
-            self.PCM.setchannels(2)
-            self.PCM.setperiodsize(160)
-
             data = out.read(320)
-            while data:
-                self.PCM.write(data)
-                if self.quit:
-                    log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
-                    out.close()
-                    return
 
+        elif config.opt_dict['radio_cardtype'] == 1:
+            out = alsaaudio.PCM(type = alsaaudio.PCM_CAPTURE, mode = alsaaudio.PCM_NONBLOCK, card = self.capture)
+            out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+            out.setrate(48000)
+            out.setchannels(2)
+            out.setperiodsize(160)
+
+        elif config.opt_dict['radio_cardtype'] == 2:
+            return
+
+        else:
+            return
+
+        while data:
+            self.PCM.write(data)
+            if self.quit:
+                log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+                out.close()
+                return
+
+            if config.opt_dict['radio_cardtype'] == 0:
                 data = out.read(320)
+
+            elif config.opt_dict['radio_cardtype'] == 1:
+                data = self.out.read()
+
+    def close(self):
+        self.PCM = None
 
 # end AudioPCM()
 
@@ -672,6 +703,7 @@ class RadioFunctions:
         if config.radio_pid != None:
             return
 
+        log('Starting ivtv-radio channel %s on %s.' % (config.channels[config.active_channel]['title'], config.opt_dict['radio_device']), 8)
         try:
             config.radio_pid = Popen(executable = config.ivtv_radio, stderr = config.log_output, \
                                 args = ['-d %s' % config.opt_dict['radio_device'], '-j', '-f %s' % config.channels[config.active_channel]['frequency']])
@@ -679,21 +711,24 @@ class RadioFunctions:
         except:
             log('Error: %s Starting %s' % (sys.exc_info()[1], config.ivtv_radio))
 
-        if config.opt_dict['radio_cardtype'] == 0:
+        if config.opt_dict['radio_cardtype'] in (0, 1):
             try:
                 config.play_pcm = AudioPCM()
                 config.play_pcm.start()
-                config.mixer.setvolume(config.retrieve_value('RadioVolume',70))
-                config.mixer.setmute(0)
 
             except:
-                log('Error: %s Starting Playback' % (sys.exc_info()[1]))
-
-        elif config.opt_dict['radio_cardtype'] == 1:
-            pass
+                log('Error: %s, Starting Playback' % (sys.exc_info()[1]))
 
         elif config.opt_dict['radio_cardtype'] == 2:
-            pass
+            log('%s sset "%s" %s' % (self.get_cardid(), config.opt_dict['source_switch'], config.opt_dict['source']))
+            try:
+                check_call(['amixer', '--quiet', '--card=%s' % self.get_cardid(), 'sset', '"%s"'  % (config.opt_dict['source_switch']), config.opt_dict['source']])
+
+            except:
+                log('Error: %s, Selecting Source' % (sys.exc_info()[1]))
+
+        config.mixer.setvolume(config.retrieve_value('RadioVolume',70))
+        config.mixer.setmute(0)
 
     # end start_radio()
 
@@ -705,6 +740,7 @@ class RadioFunctions:
 
         if config.play_pcm != None:
             config.play_pcm.quit = True
+            config.play_pcm.close()
             config.play_pcm = None
 
         if config.radio_pid != None:
