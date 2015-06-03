@@ -24,28 +24,28 @@ begin
 	prog = mythradio
 	button = KEY_VOLUMEUP
 	repeat = 0
-	config = V+
+	config = v+
 end
 
 begin
 	prog = mythradio
 	button = KEY_VOLUMEDOWN
 	repeat = 0
-	config = V-
+	config = v-
 end
 
 begin
 	prog = mythradio
 	button = KEY_CHANNELUP
 	repeat = 0
-	config = Ch+
+	config = ch+
 end
 
 begin
 	prog = mythradio
 	button = KEY_CHANNELDOWN
 	repeat = 0
-	config = Ch-
+	config = ch-
 end
 
 begin
