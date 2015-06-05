@@ -368,7 +368,6 @@ class FunctionConfig:
     def close(self):
         # close everything neatly
         if self.play_pcm != None:
-            self.play_pcm.quit = True
             self.play_pcm.close()
             self.play_pcm = None
 
@@ -439,49 +438,70 @@ class AudioPCM(Thread):
 
     def run(self):
 
-        if config.disable_alsa:
+        if config.disable_alsa or not config.opt_dict['radio_cardtype'] in (0, 1):
             return
 
         log('Starting Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
 
-        self.PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card = self.card)
-        self.PCM.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-        self.PCM.setrate(48000)
-        self.PCM.setchannels(2)
-        self.PCM.setperiodsize(160)
-
-        if config.opt_dict['radio_cardtype'] == 0:
-            out = io.open(config.opt_dict['radio_out'], 'rb')
-            data = out.read(320)
-
-        elif config.opt_dict['radio_cardtype'] == 1:
-            out = alsaaudio.PCM(type = alsaaudio.PCM_CAPTURE, mode = alsaaudio.PCM_NONBLOCK, card = self.capture)
-            out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-            out.setrate(48000)
-            out.setchannels(2)
-            out.setperiodsize(160)
-
-        elif config.opt_dict['radio_cardtype'] == 2:
-            return
-
-        else:
-            return
-
-        while data:
-            self.PCM.write(data)
-            if self.quit:
-                log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
-                out.close()
-                return
-
+        try:
             if config.opt_dict['radio_cardtype'] == 0:
-                data = out.read(320)
+                PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card = self.card)
+                PCM.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+                PCM.setrate(48000)
+                PCM.setchannels(2)
+                PCM.setperiodsize(160)
+
+                out = io.open(self.capture, 'rb')
+                while True:
+                    if self.quit:
+                        log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+                        out.close()
+                        out = None
+                        PCM = None
+                        return
+
+                    data = out.read(320)
+                    PCM.write(data)
 
             elif config.opt_dict['radio_cardtype'] == 1:
-                data = self.out.read()
+                return
+                #~ return
+                #~ PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card = self.card)
+                #~ PCM.setformat(alsaaudio.PCM_FORMAT_U8)
+                #~ PCM.setrate(8000)
+                #~ PCM.setchannels(2)
+                #~ PCM.setperiodsize(160)
+
+                out = alsaaudio.PCM(type = alsaaudio.PCM_CAPTURE, mode = alsaaudio.PCM_NONBLOCK, card = self.capture)
+                #~ out.setformat(alsaaudio.PCM_FORMAT_U8)
+                #~ out.setrate(8000)
+                out.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+                out.setrate(48000)
+                out.setchannels(2)
+                out.setperiodsize(160)
+                f = io.open('/home/mythtv/.ivtv/test.wav', 'wb')
+                while True:
+                    if self.quit:
+                        log('Stoping Radioplayback from %s on %s.' % (config.opt_dict['radio_out'], self.card), 8)
+                        f.close()
+                        out = None
+                        PCM = None
+                        return
+
+                    l, data = out.read()
+                    f.write(data)
+                    #~ if l:
+                    #~ PCM.write(data)
+                        #~ time.sleep(.001)
+
+        except:
+            log('Error: %s Playing radio on %s' % (sys.exc_info()[1], self.card))
+            out = None
+            PCM = None
+            return
 
     def close(self):
-        self.PCM = None
+        self.quit = True
 
 # end AudioPCM()
 
@@ -739,7 +759,6 @@ class RadioFunctions:
             return
 
         if config.play_pcm != None:
-            config.play_pcm.quit = True
             config.play_pcm.close()
             config.play_pcm = None
 
