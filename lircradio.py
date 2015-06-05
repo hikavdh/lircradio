@@ -1233,7 +1233,12 @@ class Listen_To(Thread):
         byteline = ''
         try:
             while True:
-                byte = self.fifo.readline(1)
+                try:
+                    byte = self.fifo.readline(1)
+
+                except:
+                    return(0)
+
                 if self.quit:
                     return(0)
 
