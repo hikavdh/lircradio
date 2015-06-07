@@ -465,7 +465,6 @@ class AudioPCM(Thread):
 
             elif config.opt_dict['radio_cardtype'] == 1:
                 return
-                #~ return
                 #~ PCM = alsaaudio.PCM(type = alsaaudio.PCM_PLAYBACK, mode = alsaaudio.PCM_NONBLOCK, card = self.card)
                 #~ PCM.setformat(alsaaudio.PCM_FORMAT_U8)
                 #~ PCM.setrate(8000)
@@ -830,6 +829,9 @@ class RadioFunctions:
         if config.disable_radio:
             log('Radio support disabled. Install the ivtv/v4l Utilities')
             return
+
+        if config.radio_pid == None:
+            self.start_radio()
 
         if config.active_channel == config.new_channel:
             return
