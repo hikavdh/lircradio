@@ -24,12 +24,12 @@ import re, codecs, locale
 import socket, argparse
 from stat import *
 from threading import Thread
+from Queue import Queue
 try:
     from subprocess32 import *
 except:
     from subprocess import *
 try:
-    from radioFunctions import log
     from radioFunctions import config as rfconf
     from radioFunctions import RadioFunctions as rfcalls
 except:
@@ -45,8 +45,163 @@ elif sys.version_info[:2] >= (3,0):
     sys.stderr.write("lircradio does not support Pyton 3 or higher.\nExpect errors while we proceed\n")
 
 if rfconf.version()[:2] < (0,2):
-    sys.stderr.write("lircradio requires radioFunctions 0.1 or higher\n")
+    sys.stderr.write("lircradio requires radioFunctions 0.2 or higher\n")
     sys.exit(2)
+
+class Log(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.quit = False
+        self.log_level = 29
+        self.verbose = True
+
+    def run(self, log_file):
+        self.log_file = log_file
+        self.log_queue = Queue()
+        self.log_output = config.open_file(log_file, mode = 'ab')
+
+        try:
+            while True:
+                if self.quit:
+                    if self.stderr_write != None:
+                        self.stderr_write.close()
+                        self.stderr_write = None
+
+                    elif self.stderr_read != None:
+                            self.stderr_read.close()
+                            self.stderr_read = None
+
+                    if self.log_queue != None and self.log_queue.empty():
+                        self.log_queue = None
+
+                    if self.log_queue == None and self.stderr_read == None:
+                        return(0)
+
+                try:
+                    if self.log_queue != None:
+                        byteline = self.log_queue.get()
+                        if isinstance(byteline, (str,unicode)):
+                            self.log(byteline)
+
+                        if isinstance(byteline, (list,tuple)):
+                            if len(byteline) == 1:
+                                self.log(byteline[0])
+
+                            elif len(byteline) == 2:
+                                self.log(byteline[0], byteline[1])
+
+                            elif len(byteline) > 2:
+                                self.log(byteline[0], byteline[1], byteline[2])
+
+                except:
+                    pass
+
+                try:
+                    if self.stderr_read != None:
+                        byteline = self.stderr_read.readline(1)
+                        self.log(byteline)
+
+                except:
+                    pass
+
+            self.rotate_log()
+
+        except:
+            err_obj = sys.exc_info()[2]
+            log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
+
+            while True:
+                err_obj = err_obj.tb_next
+                if err_obj == None:
+                    break
+
+                log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
+
+            log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+            return(99)
+
+    def log(message, log_level = 1, log_target = 3):
+        """
+        Log messages to log and/or screen
+        """
+        def now():
+             return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ': '
+
+        if type(message) != unicode:
+            message = unicode(message)
+
+        # Log to the screen
+        if log_level == 0 or ((self.verbose) and (log_level & self.log_level) and (log_target & 1)):
+            sys.stdout.write(message.encode("utf-8"))
+
+        # Log to the log-file
+        if (log_level == 0 or ((log_level & self.log_level) and (log_target & 2))) and self.log_output != None:
+            message = u'%s%s\n' % (now(), message.replace('\n',''))
+            self.log_output.write(message.encode("utf-8"))
+
+    def rotate_log(self):
+        if  self.log_output == None or self.log_file == '':
+            return
+
+        self.log_output.flush()
+        if os.stat(self.log_file).st_size < config.max_logsize:
+            return
+
+        self.log_output.close()
+        if os.access('%s.%s' % (self.log_file, config.max_logcount), os.F_OK):
+            os.remove('%s.%s' % (self.log_file, config.max_logcount))
+
+        for i in range(self.max_logcount - 1, 0, -1):
+            if os.access('%s.%s' % (self.log_file, i), os.F_OK):
+                os.rename('%s.%s' % (self.log_file, i), '%s.%s' % (self.log_file, i + 1))
+
+        os.rename(self.log_file, '%s.1' % (self.log_file))
+
+        self.log_output =  config.open_file(log_file, mode = 'ab')
+
+    def open_stderr_filehandles(self):
+        # Checking out the fifo file
+        try:
+            tmpval = os.umask(0115)
+            stderr_fifo = '/tmp/lircradio_stderr_fifo'
+            for f in (stderr_fifo,):
+                if os.access(f, os.F_OK):
+                    if not S_ISFIFO(os.stat(f).st_mode):
+                         os.remove(f)
+                         os.mkfifo(f, 0662)
+
+                    if not os.access(f, os.R_OK):
+                        os.chmod(f, 0662)
+
+                else:
+                    os.mkfifo(f, 0662)
+
+        except:
+            log('Error creating stderr_fifo: %s\n' % stderr_fifo, 0)
+
+        os.umask(tmpval)
+
+        # Opening the read handle to the fifo
+        try:
+            self.stderr_read = config.open_file(stderr_fifo, mode = 'r', buffering = None)
+
+        except:
+            log('Error reading stderr_fifo: %s\n' % stderr_fifo,0)
+            return(1)
+
+        # Opening the write handle to the fifo
+        try:
+            self.stderr_write = config.open_file(stderr_fifo, mode = 'w', buffering = None)
+
+        except:
+            log('Error writing to stderr_fifo: %s\n' % stderr_fifo, 0)
+            return(1)
+
+    def close(self):
+        self.quit = True
+
+# end Log()
+log = Log()
 
 class Configure:
     """This class holds all configuration details and manages file IO"""
@@ -55,7 +210,7 @@ class Configure:
 
         self.name ='lircradio.py'
         self.major = 0
-        self.minor = 2
+        self.minor = 3
         self.patch = 0
         self.beta = True
 
@@ -66,7 +221,9 @@ class Configure:
         #  8=log Channel changes
         # 16=log Volume changes
         # 32=log all radiofunction calls, Mainly for debugging
-        rfconf.log_level = 29
+        log.log_level = 29
+        self.max_logsize = 1048576
+        self.max_logcount = 5
 
         self.opt_dict = {}
         self.file_encoding = 'utf-8'
@@ -84,7 +241,7 @@ class Configure:
         self.ivtv_dir = u'%s/.ivtv' % self.hpath
         # check for the ~.ivtv dir
         if not os.path.exists(self.ivtv_dir):
-            log('Creating %s directory,' % self.ivtv_dir)
+            log.log('Creating %s directory,\n' % self.ivtv_dir)
             os.mkdir(self.ivtv_dir)
 
         self.etc_dir = u'/etc/lircradio'
@@ -99,6 +256,7 @@ class Configure:
         self.fifo_read = None
         self.fifo_write = None
         self.ircat_pid = None
+        self.check_commands_sh()
         self.bash_commands = {}
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
 
@@ -201,9 +359,9 @@ class Configure:
 
         except IOError as e:
             if e.errno == 2:
-                log('File: \"%s\" not found.\n' % file_name)
+                log.log('File: \"%s\" not found.\n' % file_name)
             else:
-                log('File: \"%s\": %s.\n' % (file_name, e.strerror))
+                log.log('File: \"%s\": %s.\n' % (file_name, e.strerror))
             return None
 
         return file_handler
@@ -236,7 +394,7 @@ class Configure:
                 return line
 
         except UnicodeError:
-            log('%s is not encoded in %s.\n' % (file.name, encoding))
+            log.log('%s is not encoded in %s.\n' % (file.name, encoding))
 
         return False
 
@@ -264,7 +422,7 @@ class Configure:
                         codecs.getencoder(encoding)
 
                     except LookupError:
-                        log('%s has invalid encoding %s.\n' % (file.name, encoding))
+                        log.log('%s has invalid encoding %s.\n' % (file.name, encoding))
                         return False
 
                     return True
@@ -274,6 +432,106 @@ class Configure:
         return False
 
     # end check_encoding()
+
+    def check_commands_sh(self):
+        poweroff = self.check_path("poweroff", True)
+        reboot = self.check_path("reboot", True)
+        hibernate_ram = self.check_path("hibernate-ram", True)
+        hibernate = self.check_path("hibernate", True)
+        pm_suspend = self.check_path("pm-suspend", True)
+        pm_hibernate =self.check_path("pm-hibernate", True)
+
+        # Checking for the presence of Commands.sh
+        if os.access(self.ivtv_dir + '/Commands.sh', os.F_OK):
+            if not os.access(self.ivtv_dir + '/Commands.sh', os.X_OK):
+                os.chmod(self.ivtv_dir + '/Commands.sh', 0750)
+
+            self.command_name = self.ivtv_dir + '/Commands.sh'
+
+        elif os.access('/usr/bin/Commands.sh', os.X_OK):
+            self.command_name = '/usr/bin/Commands.sh'
+
+        else:
+            f = self.open_file(self.ivtv_dir + '/Commands.sh', 'wb')
+            f.write('#!/bin/bash\n')
+            f.write('\n')
+            f.write('Command=${1:-""}\n')
+            f.write('\n')
+            f.write('case $Command in\n')
+            f.write('    "poweroff")\n')
+            f.write('    # The command to execute on poweroff\n')
+            if poweroff != None:
+                f.write('    sudo %s\n' % poweroff)
+
+            else:
+                f.write('#    sudo poweroff\n')
+
+            f.write('    ;;\n')
+            f.write('    "reboot")\n')
+            f.write('    # The command to execute on reboot\n')
+            if reboot != None:
+                f.write('    sudo %s\n' % reboot)
+
+            else:
+                f.write('#    sudo reboot\n')
+
+            f.write('    ;;\n')
+            f.write('    "suspend")\n')
+            f.write('    # The command to execute on suspend\n')
+            if hibernate_ram != None:
+                f.write('    sudo %s\n' % hibernate_ram)
+                if pm_suspend != None:
+                    f.write('#    sudo %s\n' % pm_suspend)
+
+            elif pm_suspend != None:
+                f.write('    sudo %s\n' % pm_suspend)
+
+            else:
+                f.write('#    sudo pm_suspend\n')
+
+            f.write('    ;;\n')
+            f.write('    "hibernate")\n')
+            f.write('    # The command to execute on hibernate\n')
+            if hibernate != None:
+                f.write('    sudo %s\n' % hibernate)
+                if pm_hibernate != None:
+                    f.write('#    sudo %s\n' % pm_hibernate)
+
+            elif pm_hibernate != None:
+                f.write('    sudo %s\n' % pm_hibernate)
+
+            else:
+                f.write('#    sudo pm_hibernate\n')
+
+            f.write('    ;;\n')
+            f.write('esac   \n')
+            f.write('\n')
+            f.close()
+            self.command_name = self.ivtv_dir + '/Commands.sh'
+            os.chmod(self.command_name, 0750)
+
+    # end check_commands_sh()
+
+    def check_path(self, name, use_sudo = False):
+        if use_sudo:
+            try:
+                path = check_output(['sudo', 'which', name], stderr = None)
+                return re.sub('\n', '',path)
+
+            except:
+                log('%s not Found!\n' % (name))
+                return None
+
+        else:
+            try:
+                path = check_output(['which', name], stderr = None)
+                return re.sub('\n', '',path)
+
+            except:
+                log('%s not Found!\n' % (name))
+                return None
+
+    # end check_path()
 
     def read_commandline(self):
         """Initiate argparser and read the commandline"""
@@ -388,15 +646,15 @@ class Configure:
                     break
 
                 else:
-                    log('Error opening configfile: %s\n' % file, 1)
+                    log.log('Error opening configfile: %s\n' % file, 1)
 
             else:
-                log('configfile: %s is not readable!\n' % file, 1 )
+                log.log('configfile: %s is not readable!\n' % file, 1 )
 
         if f == None:
             x = self.read_radioFrequencies_File()
             if x == False:
-                log('Could not find an accessible configfile!\n', 1)
+                log.log('Could not find an accessible configfile!\n', 1)
 
             else:
                 self.write_config(True)
@@ -465,10 +723,10 @@ class Configure:
                                 self.opt_dict[a[0].lower().strip()] = a[1].strip()
 
                         else:
-                            log('Ignoring incomplete Options line in config file %s: %r\n' % (file, line))
+                            log.log('Ignoring incomplete Options line in config file %s: %r\n' % (file, line))
 
                     except Exception:
-                        log('Invalid Options line in config file %s: %r\n' % (file, line))
+                        log.log('Invalid Options line in config file %s: %r\n' % (file, line))
                         continue
 
                 # Read the channel stuff
@@ -477,7 +735,7 @@ class Configure:
                         # Strip the name from the frequency
                         a = line.split('=',1)
                         if len(a) != 2:
-                            log('Ignoring incomplete Channel line in config file %s: %r\n' % (file, line))
+                            log.log('Ignoring incomplete Channel line in config file %s: %r\n' % (file, line))
                             continue
 
                         ch_num += 1
@@ -489,7 +747,7 @@ class Configure:
                             rfconf.channels[ch_num]['title'] = u'Frequency %s' % a[0].strip()
 
                     except Exception:
-                        log('Invalid Channel line in config file %s: %r\n' % (file, line))
+                        log.log('Invalid Channel line in config file %s: %r\n' % (file, line))
                         continue
 
                 # Read the lirc IDs
@@ -536,25 +794,19 @@ class Configure:
                         elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
                             bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
                         else:
-                            log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
+                            log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
 
                     except Exception:
-                        log('Invalid Lirc line in config file %s: %r\n' % (file, line))
+                        log.log('Invalid Lirc line in config file %s: %r\n' % (file, line))
                         continue
 
             except Exception as e:
-                log(u'Error reading Config')
+                log.log(u'Error reading Config\n')
                 continue
 
         f.close()
 
         #~ self.write_config(True)
-        if 'log_level' in self.opt_dict.keys():
-            rfconf.log_level = self.opt_dict['log_level']
-
-        if 'log_file' in self.opt_dict.keys():
-            self.log_file = self.opt_dict['log_file']
-
         if len(rfconf.channels) == 0:
             # There are no channels so looking for an old ~\.ivtv\radioFrequencies file
             if not self.read_radioFrequencies_File():
@@ -612,11 +864,11 @@ class Configure:
                         rfconf.channels[ch_num]['title'] = u'Frequency %s' % a[1].strip()
 
                 except Exception:
-                    log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
+                    log.log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
                     continue
 
             except Exception as e:
-                log(u'Error reading Config')
+                log.log(u'Error reading Config\n')
                 continue
 
         f.close()
@@ -681,31 +933,36 @@ class Configure:
 
         if self.args.verbose != None:
             self.opt_dict['verbose'] = self.args.verbose
-            rfconf.opt_dict['verbose'] = self.opt_dict['verbose']
+            log.verbose = self.opt_dict['verbose']
+
+        if 'log_level' in self.opt_dict.keys():
+            log.log_level = self.opt_dict['log_level']
 
         # Opening the logfile
-        if self.args.log_file != None:
-            rfconf.log_output = self.open_file(self.args.log_file, mode = 'ab')
+        if self.args.log_file != None and os.access(self.args.log_file, os.W_OK):
+            log_file = self.args.log_file
 
-        if rfconf.log_output != None:
-            rfconf.log_file = self.args.log_file
-            sys.stderr = rfconf.log_output
+        elif 'log_file' in self.opt_dict.keys() and os.access(self.opt_dict['log_file'], os.W_OK):
+            log_file = self.opt_dict['log_file']
 
         else:
-            rfconf.log_output = self.open_file(self.log_file, mode = 'ab')
-            if rfconf.log_output != None:
-                rfconf.log_file = self.log_file
-                sys.stderr = rfconf.log_output
+            log_file = self.log_file
 
-        if self.args.log_file != None and not os.access(self.args.log_file, os.W_OK):
-            log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, self.log_file), 0)
+        log.start(log_file)
+        if self.args.log_file != None and log_file != self.args.log_file:
+            log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, log_file), 0)
 
+        elif 'log_file' in self.opt_dict.keys() and log_file != self.opt_dict['log_file']:
+            log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.opt_dict['log_file'], log_file), 0)
+
+        self.log_file = log_file
         if self.args.fifo_file != None:
             self.opt_dict['fifo_file'] = self.args.fifo_file
 
         if self.args.lirc_id != None:
             self.opt_dict['lirc_id'] = self.args.lirc_id
 
+        #
         if self.args.myth_backend != None:
             self.opt_dict['myth_backend'] = self.args.myth_backend
 
@@ -717,8 +974,8 @@ class Configure:
             self.opt_dict['myth_backend'] = None
 
         if self.opt_dict['myth_backend'] != None and rfcalls().query_backend(self.opt_dict['myth_backend']) == -2:
-            log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
-            log('Run with --myth-backend None to disable checking!\n', 0)
+            log.log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
+            log.log('Run with --myth-backend None to disable checking!\n', 0)
 
         if self.args.radio_cardtype != None:
             self.opt_dict['radio_cardtype'] = self.args.radio_cardtype
@@ -731,7 +988,7 @@ class Configure:
 
             x = is_video_device(self.opt_dict['radio_device'])
             if x == False:
-                log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                log.log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
                 self.opt_dict['radio_cardtype'] = None
                 self.opt_dict['radio_device'] = None
                 self.opt_dict['video_device'] = None
@@ -748,7 +1005,7 @@ class Configure:
                         break
 
                 else:
-                    log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                    log.log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
                     self.opt_dict['radio_cardtype'] = None
                     self.opt_dict['radio_device'] = None
                     self.opt_dict['video_device'] = None
@@ -766,7 +1023,7 @@ class Configure:
 
             udevpath =  rfcalls().query_udev_path( self.opt_dict['video_device'], 'video4linux')
             if autodetect_card['udevpath'] != udevpath:
-                log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
+                log.log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
                 self.opt_dict['video_device'] = autodetect_card['video_device']
 
             if self.args.radio_out != None:
@@ -775,16 +1032,16 @@ class Configure:
             if self.opt_dict['radio_cardtype'] == 0:
                 udevpath =  rfcalls().query_udev_path( self.opt_dict['radio_out'], 'video4linux')
                 if autodetect_card['udevpath'] != udevpath:
-                    log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    log.log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
             elif self.opt_dict['radio_cardtype'] == 1:
                 if autodetect_card['radio_out'] != self.opt_dict['radio_out']:
-                    log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    log.log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
             elif self.opt_dict['radio_cardtype'] == 2 and self.opt_dict['radio_out'] == self.select_card:
-                log(self.select_card)
+                log.log(self.select_card)
 
         else:
             self.opt_dict['radio_cardtype'] = -1
@@ -797,10 +1054,10 @@ class Configure:
                 self.opt_dict['audio_card'] = self.args.audio_card
 
             else:
-                log('%s is not a recognized audiocard\n' % self.args.audio_card, 1)
+                log.log('%s is not a recognized audiocard\n' % self.args.audio_card, 1)
 
         if not self.opt_dict['audio_card'] in rfcalls().get_alsa_cards():
-            log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
+            log.log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
             self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
 
         cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
@@ -810,16 +1067,16 @@ class Configure:
                 self.opt_dict['audio_mixer'] = self.args.audio_mixer
 
             else:
-                log('%s is not a recognized audiomixer]n' % self.args.audio_mixer, 1)
+                log.log('%s is not a recognized audiomixer]n' % self.args.audio_mixer, 1)
 
         if not self.opt_dict['audio_mixer'] in rfcalls().get_alsa_mixers(cardid):
-            log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
+            log.log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
             self.opt_dict['audio_card'] = rfcalls().get_alsa_mixers(cardid, 0)
 
         self.write_opts_to_log()
         if self.args.configure:
             if self.opt_dict['radio_device'] == None:
-                log('You need an accesible radio-device to configure\n')
+                log.log('You need an accesible radio-device to configure\n')
                 self.write_config(False)
                 return(1)
             else:
@@ -834,15 +1091,15 @@ class Configure:
             return(0)
 
         if len(rfconf.channels) == 0 and self.opt_dict['radio_device'] != None:
-            log('There are no channels defined! Exiting!\n', 0)
-            log('Run with --card-type -1 to disable radio support!\n', 0)
-            log('or with --configure to probe for available frequencies!\n', 0)
+            log.log('There are no channels defined! Exiting!\n', 0)
+            log.log('Run with --card-type -1 to disable radio support!\n', 0)
+            log.log('or with --configure to probe for available frequencies!\n', 0)
             return(1)
 
         rfconf.opt_dict = self.opt_dict
         if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
             if not rfconf.set_mixer():
-                log('Error setting the mixer\n')
+                log.log('Error setting the mixer\n')
                 return(1)
 
     # end validate_commandline()
@@ -878,7 +1135,7 @@ class Configure:
                     os.mkfifo(f, 0662)
 
         except:
-            log('Error creating fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log('Error creating fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
 
         os.umask(tmpval)
 
@@ -887,7 +1144,7 @@ class Configure:
             self.fifo_read = config.open_file(self.opt_dict['fifo_file'], mode = 'rb', buffering = None)
 
         except:
-            log('Error reading fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log('Error reading fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
             return(1)
 
         # Opening the write handle to the fifo
@@ -895,16 +1152,16 @@ class Configure:
             self.fifo_write = config.open_file(self.opt_dict['fifo_file'], mode = 'wb', buffering = None)
 
         except:
-            log('Error writing to fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log('Error writing to fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
             return(1)
     # end open_fifo_filehandles()
 
     def start_ircat(self):
         if call(['pgrep', 'lircd']) != 0:
-            log('No lirc daemon found, so not starting ircat\n', 1)
+            log.log('No lirc daemon found, so not starting ircat\n', 1)
 
         else:
-            self.ircat_pid = Popen(["/usr/bin/ircat", self.opt_dict['lirc_id']], stdout = self.fifo_write, stderr = rfconf.log_output)
+            self.ircat_pid = Popen(["/usr/bin/ircat", self.opt_dict['lirc_id']], stdout = self.fifo_write, stderr = log.stderr_write)
 
     # end start_ircat()
 
@@ -961,30 +1218,30 @@ class Configure:
         """
         Save the the used options to the logfile
         """
-        if rfconf.log_output == None:
+        if log.log_output == None:
             return(0)
 
-        log(u'',1, 2)
-        log(u'Starting lircradio',1, 2)
-        log(u'Python versie: %s.%s.%s' % (sys.version_info[0], sys.version_info[1], sys.version_info[2]),1, 2)
-        log(u'The Netherlands (%s)' % self.version(True), 1, 2)
-        log(u'The Netherlands (%s)' % rfconf.version(True), 1, 2)
-        log(u'log level = %s' % (rfconf.log_level), 1, 2)
-        log(u'config_file = %s' % (self.args.config_file), 1, 2)
-        log(u'verbose = %s\n' % self.opt_dict['verbose'], 1, 2)
-        log(u'fifo_file = %s\n' % self.opt_dict['fifo_file'], 1, 2)
-        log(u'lirc_id = %s\n' % self.opt_dict['lirc_id'], 1, 2)
-        log(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'], 1, 2)
-        log(u'radio_device = %s\n' % self.opt_dict['radio_device'], 1, 2)
-        log(u'radio_out = %s\n' % self.opt_dict['radio_out'], 1, 2)
-        log(u'video_device = %s\n' % self.opt_dict['video_device'], 1, 2)
-        log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
-        log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
-        log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
-        log(u'source_switch = %s\n' % self.opt_dict['source_switch'], 1, 2)
-        log(u'source = %s\n' % self.opt_dict['source'], 1, 2)
-        #~ log(u'source_mixer = %s\n' % self.opt_dict['source_mixer'], 1, 2)
-        log(u'',1, 2)
+        log.log(u'',1, 2)
+        log.log(u'Starting lircradio',1, 2)
+        log.log(u'Python versie: %s.%s.%s' % (sys.version_info[0], sys.version_info[1], sys.version_info[2]),1, 2)
+        log.log(u'The Netherlands (%s)' % self.version(True), 1, 2)
+        log.log(u'The Netherlands (%s)' % rfconf.version(True), 1, 2)
+        log.log(u'log level = %s' % (rfconf.log.log_level), 1, 2)
+        log.log(u'config_file = %s' % (self.args.config_file), 1, 2)
+        log.log(u'verbose = %s\n' % self.opt_dict['verbose'], 1, 2)
+        log.log(u'fifo_file = %s\n' % self.opt_dict['fifo_file'], 1, 2)
+        log.log(u'lirc_id = %s\n' % self.opt_dict['lirc_id'], 1, 2)
+        log.log(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'], 1, 2)
+        log.log(u'radio_device = %s\n' % self.opt_dict['radio_device'], 1, 2)
+        log.log(u'radio_out = %s\n' % self.opt_dict['radio_out'], 1, 2)
+        log.log(u'video_device = %s\n' % self.opt_dict['video_device'], 1, 2)
+        log.log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
+        log.log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
+        log.log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
+        log.log(u'source_switch = %s\n' % self.opt_dict['source_switch'], 1, 2)
+        log.log(u'source = %s\n' % self.opt_dict['source'], 1, 2)
+        #~ log.log(u'source_mixer = %s\n' % self.opt_dict['source_mixer'], 1, 2)
+        log.log(u'',1, 2)
 
     # end write_opts_to_log()
 
@@ -1068,10 +1325,10 @@ class Configure:
             fo = self.open_file(self.args.config_file + '.old')
             if fo == None or not self.check_encoding(fo):
                 # We cannot read the old config, so we create a new one
-                log('Error Opening the old config. Trying for an old radioFrequencies file.\n')
+                log.log('Error Opening the old config. Trying for an old radioFrequencies file.\n')
                 x = self.read_radioFrequencies_File()
                 if x == False:
-                    log('Error Opening an old radioFrequencies file. Creating a new Channellist.\n')
+                    log.log('Error Opening an old radioFrequencies file. Creating a new Channellist.\n')
 
                 add_channels = True
 
@@ -1104,7 +1361,7 @@ class Configure:
                             # We just copy everything except the old configuration (type = 1)
                             f.write(line + u'\n')
                     except:
-                        log('Error reading old config\n')
+                        log.log('Error reading old config\n')
                         continue
 
                 fo.close()
@@ -1250,21 +1507,21 @@ class Listen_To(Thread):
                     continue
 
                 elif byteline.strip().lower() == 'start':
-                    log('Starting FiFo Listener on %s\n'% config.opt_dict['fifo_file'], 1)
+                    log.log('Starting FiFo Listener on %s\n'% config.opt_dict['fifo_file'], 1)
                     byteline = ''
                     continue
 
                 elif byteline.strip().lower() == 'quit' or self.quit:
-                    log('%s command received.' % byteline, 2)
+                    log.log('%s command received.\n' % byteline, 2)
                     return(0)
 
                 elif re.match('([0-9]+?)', byteline.strip()):
-                    log('%s command received.' % byteline, 2)
+                    log.log('%s command received.\n' % byteline, 2)
                     rfcalls().select_channel(int(re.match('([0-9]+?)', byteline.strip()).group(0)))
                     byteline = ''
 
                 elif byteline.strip() in rfconf.functioncalls.keys():
-                    log('%s command received.' % byteline, 2)
+                    log.log('%s command received.\n' % byteline, 2)
                     if rfconf.functioncalls[byteline.strip()] == 'CreateMythfmMenu':
                         rfcalls().rf_function_call('CreateMythfmMenu', [config.ivtv_dir, config.opt_dict['fifo_file']])
 
@@ -1273,31 +1530,31 @@ class Listen_To(Thread):
                     byteline = ''
 
                 elif byteline.strip() in config.bash_commands.keys():
-                    log('%s command received.' % byteline, 2)
+                    log.log('%s command received.\n' % byteline, 2)
                     rfcalls().rf_function_call('Command', rfconf.functioncalls[byteline.strip()])
                     byteline = ''
 
                 elif byteline.strip() in config.external_commands.keys():
-                    log('%s command received.' % byteline, 2)
+                    log.log('%s command received.\n' % byteline, 2)
                     call(config.external_commands[byteline.strip()])
                     byteline = ''
 
                 else:
-                    log('Unregognized %s command received.' % byteline, 4)
+                    log.log('Unregognized %s command received.\n' % byteline, 4)
                     byteline = ''
 
         except:
             err_obj = sys.exc_info()[2]
-            log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
+            log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
 
             while True:
                 err_obj = err_obj.tb_next
                 if err_obj == None:
                     break
 
-                log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
+                log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
 
-            log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+            log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
             return(99)
 
 # end Listen_To()
@@ -1311,8 +1568,8 @@ def main():
         if x != None:
             return(x)
 
-        log( 'Starting Lirc Listener on %s\n'% config.opt_dict['lirc_id'], 0)
-        log( 'To QUIT: echo "quit" to %s\n'% config.opt_dict['fifo_file'], 0, 1)
+        log.log( 'Starting Lirc Listener on %s\n'% config.opt_dict['lirc_id'], 0)
+        log.log( 'To QUIT: echo "quit" to %s\n'% config.opt_dict['fifo_file'], 0, 1)
         #~ print rfconf.channels
         config.open_fifo_filehandles()
         config.start_ircat()
@@ -1321,22 +1578,22 @@ def main():
         listener.start()
 
         listener.join()
-        log( 'Closing down\n',1)
+        log.log( 'Closing down\n',1)
         if config.ircat_pid != None:
             config.ircat_pid.kill()
 
     except:
         err_obj = sys.exc_info()[2]
-        log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
+        log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
 
         while True:
             err_obj = err_obj.tb_next
             if err_obj == None:
                 break
 
-            log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
+            log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
 
-        log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+        log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
         return(99)
 
     # and return success

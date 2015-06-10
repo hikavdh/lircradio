@@ -22,9 +22,12 @@ class FunctionConfig:
     def __init__(self):
         self.name = 'radioFunctions.py'
         self.major = 0
-        self.minor = 2
+        self.minor = 3
         self.patch = 0
         self.beta = True
+
+        self.log_queue = None
+        self.stderr_write = None
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',
                                          u'reboot'                      :u'Reboot',
@@ -51,13 +54,6 @@ class FunctionConfig:
         self.channels = {}
         self.frequencies = {}
         self.opt_dict = {}
-        self.opt_dict['verbose'] = True
-
-        self.max_logsize = 1048576
-        self.max_logcount = 5
-        self.log_level = 1
-        self.log_file = ''
-        self.log_output = None
 
         self.disable_alsa = False
         self.disable_radio = False
@@ -159,82 +155,6 @@ class FunctionConfig:
                 log('I can not find ivtv-tools and/or v4l-tools, so unable to play radio.\n')
                 log('Disabling radiofunctionality.\n')
                 self.disable_radio = True
-
-        poweroff = check_path("poweroff", True)
-        reboot = check_path("reboot", True)
-        hibernate_ram = check_path("hibernate-ram", True)
-        hibernate = check_path("hibernate", True)
-        pm_suspend = check_path("pm-suspend", True)
-        pm_hibernate =check_path("pm-hibernate", True)
-
-        # Checking for the presence of Commands.sh
-        if os.access(self.ivtv_dir + '/Commands.sh', os.F_OK):
-            if not os.access(self.ivtv_dir + '/Commands.sh', os.X_OK):
-                os.chmod(self.ivtv_dir + '/Commands.sh', 0750)
-
-            self.command_name = self.ivtv_dir + '/Commands.sh'
-
-        elif os.access('/usr/bin/Commands.sh', os.X_OK):
-            self.command_name = '/usr/bin/Commands.sh'
-
-        else:
-            f = io.open(self.ivtv_dir + '/Commands.sh', 'wb')
-            f.write('#!/bin/bash\n')
-            f.write('\n')
-            f.write('Command=${1:-""}\n')
-            f.write('\n')
-            f.write('case $Command in\n')
-            f.write('    "poweroff")\n')
-            f.write('    # The command to execute on poweroff\n')
-            if poweroff != None:
-                f.write('    sudo %s\n' % poweroff)
-
-            else:
-                f.write('#    sudo poweroff\n')
-
-            f.write('    ;;\n')
-            f.write('    "reboot")\n')
-            f.write('    # The command to execute on reboot\n')
-            if reboot != None:
-                f.write('    sudo %s\n' % reboot)
-
-            else:
-                f.write('#    sudo reboot\n')
-
-            f.write('    ;;\n')
-            f.write('    "suspend")\n')
-            f.write('    # The command to execute on suspend\n')
-            if hibernate_ram != None:
-                f.write('    sudo %s\n' % hibernate_ram)
-                if pm_suspend != None:
-                    f.write('#    sudo %s\n' % pm_suspend)
-
-            elif pm_suspend != None:
-                f.write('    sudo %s\n' % pm_suspend)
-
-            else:
-                f.write('#    sudo pm_suspend\n')
-
-            f.write('    ;;\n')
-            f.write('    "hibernate")\n')
-            f.write('    # The command to execute on hibernate\n')
-            if hibernate != None:
-                f.write('    sudo %s\n' % hibernate)
-                if pm_hibernate != None:
-                    f.write('#    sudo %s\n' % pm_hibernate)
-
-            elif pm_hibernate != None:
-                f.write('    sudo %s\n' % pm_hibernate)
-
-            else:
-                f.write('#    sudo pm_hibernate\n')
-
-            f.write('    ;;\n')
-            f.write('esac   \n')
-            f.write('\n')
-            f.close()
-            self.command_name = self.ivtv_dir + '/Commands.sh'
-            os.chmod(self.command_name, 0750)
 
 
     # end check_dependencies()
@@ -342,29 +262,6 @@ class FunctionConfig:
 
     # end set_mixer()
 
-    def rotate_log(self):
-        if  self.log_output == None or self.log_file == '':
-            return
-
-        self.log_output.flush()
-        if os.stat(self.log_file).st_size < self.max_logsize:
-            return
-
-        self.log_output.close()
-        if os.access('%s.%s' % (self.log_file, self.max_logcount), os.F_OK):
-            os.remove('%s.%s' % (self.log_file, self.max_logcount))
-
-        for i in range(self.max_logcount - 1, 0, -1):
-            if os.access('%s.%s' % (self.log_file, i), os.F_OK):
-                os.rename('%s.%s' % (self.log_file, i), '%s.%s' % (self.log_file, i + 1))
-
-        os.rename(self.log_file, '%s.1' % (self.log_file))
-
-        self.log_output =  io.open(self.log_file, mode = 'ab', encoding = 'utf-8')
-        sys.stderr = self.log_output
-
-    # end rotate_log()
-
     def close(self):
         # close everything neatly
         if self.play_pcm != None:
@@ -382,10 +279,6 @@ class FunctionConfig:
                 for i in m.values():
                     m['mixer'] = None
 
-        try:
-            self.log_output.close()
-
-        except:
             pass
 
     # end close()
@@ -397,22 +290,10 @@ def log(message, log_level = 1, log_target = 3):
     """
     Log messages to log and/or screen
     """
-    def now():
-         return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z') + ': '
+    if config.log_queue == None:
+        return
 
-    if type(message) != unicode:
-        message = unicode(message)
-
-    # Log to the screen
-    if log_level == 0 or ((config.opt_dict['verbose']) and (log_level & config.log_level) and (log_target & 1)):
-        sys.stdout.write(message.encode("utf-8"))
-
-    # Log to the log-file
-    if (log_level == 0 or ((log_level & config.log_level) and (log_target & 2))) and config.log_output != None:
-        message = u'%s%s\n' % (now(), message.replace('\n',''))
-        sys.stderr.write(message.encode("utf-8"))
-
-    config.rotate_log()
+    config.log_queue.put([message, log_level, log_target])
 # end log()
 
 class AudioPCM(Thread):
@@ -724,7 +605,7 @@ class RadioFunctions:
 
         log('Starting ivtv-radio channel %s on %s.' % (config.channels[config.active_channel]['title'], config.opt_dict['radio_device']), 8)
         try:
-            config.radio_pid = Popen(executable = config.ivtv_radio, stderr = config.log_output, \
+            config.radio_pid = Popen(executable = config.ivtv_radio, stderr = config.stderr_write, \
                                 args = ['-d %s' % config.opt_dict['radio_device'], '-j', '-f %s' % config.channels[config.active_channel]['frequency']])
 
         except:
