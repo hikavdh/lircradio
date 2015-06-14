@@ -257,8 +257,16 @@ class Configure:
         self.fifo_write = None
         self.ircat_pid = None
         self.check_commands_sh()
+        self.functioncalls = {u'poweroff'                  :u'PowerOff',
+                                         u'reboot'                      :u'Reboot',
+                                         u'hibernate'                :u'Hibernate',
+                                         u'suspend'                    :u'Suspend'}
         self.bash_commands = {}
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
+        self.plugin_list = {0:'testPlugin',
+                                     1:'radioFunctions'}
+        self.get_plugins()
+
 
         # Initialising radio and audio
         self.dev_types = {}
@@ -532,6 +540,40 @@ class Configure:
                 return None
 
     # end check_path()
+
+    def get_plugins(self):
+        self.plugins = []
+        self.pi_conf = {}
+        self.pi_func = {}
+        f = self.open_file('%s/include' % (self.etc_dir))
+        if f == None:
+            return
+
+        pi_cnt = 0
+        for byteline in f.readlines():
+            line = self.get_line(f, byteline)
+            if not line:
+                continue
+
+            a = line.split(';')
+            if len(a) != 2:
+                continue
+
+            #~ try:
+            if a[0] in self.plugin_list.values() and not a[0] in self.plugins:
+                pi_cnt += 1
+                if a[0] == self.plugin_list[1]:
+                    self.plugins.append(1)
+                    from radioFunctions import rfconf
+                    self.pi_conf[pi_cnt] = rfconf
+                    from radioFunctions import RadioFunctions
+                    self.pi_func[pi_cnt] = RadioFunctions
+
+
+             #~ except:
+                #~ print "I cannot load %s.py. Make sure it's in the same directory!" % self.plugins[pi_cnt]
+
+    # end get_plugins()
 
     def read_commandline(self):
         """Initiate argparser and read the commandline"""
@@ -1164,55 +1206,6 @@ class Configure:
             self.ircat_pid = Popen(["/usr/bin/ircat", self.opt_dict['lirc_id']], stdout = self.fifo_write, stderr = log.stderr_write)
 
     # end start_ircat()
-
-    def detect_radiodevice(self):
-        video_devs = []
-        for f in os.listdir('/dev/'):
-            if f[:5] == 'video':
-                video_devs.append(f)
-
-        audio_cards = {}
-        for id in range(len(rfcalls().get_alsa_cards())):
-            audio_cards[id] = rfcalls().query_udev_path(u'/dev/snd/controlC%s' % id, 'sound')
-
-        self.radio_devs = []
-        for f in os.listdir('/dev/'):
-            if f[:5] == 'radio':
-                devno = int(f[5:])
-                radio_card = {}
-                radio_card['radio_device'] = u'/dev/%s' % f
-                radio_card['udevpath'] = rfcalls().query_udev_path('/dev/%s' % f, 'video4linux')
-                if 'video%s' % devno in video_devs:
-                    radio_card['video_device'] = u'/dev/video%s' % devno
-
-                else:
-                    radio_card['video_device'] = None
-
-                if 'video%s' % (devno + 24) in video_devs:
-                    radio_card['radio_out'] = u'/dev/video%s' % (devno + 24)
-                    radio_card['radio_cardtype'] = 0
-                    self.radio_devs.append(radio_card)
-                    continue
-
-                if radio_card['udevpath'] == None:
-                    radio_card['radio_out'] = None
-                    radio_card['radio_cardtype'] = 2
-                    self.radio_devs.append(radio_card)
-                    continue
-
-                for id in range(len(rfcalls().get_alsa_cards())):
-                    if audio_cards[id] == radio_card['udevpath']:
-                        radio_card['radio_out'] = rfcalls().get_alsa_cards(id)
-                        radio_card['radio_cardtype'] = 1
-                        break
-
-                else:
-                    radio_card['radio_out'] = self.select_card
-                    radio_card['radio_cardtype'] = 2
-
-                self.radio_devs.append(radio_card)
-
-    # end detect_radiodevice()
 
     def write_opts_to_log(self):
         """

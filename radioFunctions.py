@@ -29,11 +29,7 @@ class FunctionConfig:
         self.log_queue = None
         self.stderr_write = None
 
-        self.functioncalls = {u'poweroff'                  :u'PowerOff',
-                                         u'reboot'                      :u'Reboot',
-                                         u'hibernate'                :u'Hibernate',
-                                         u'suspend'                    :u'Suspend',
-                                         u'play_radio'              :u'PlayRadio',
+        self.functioncalls = {u'play_radio'              :u'PlayRadio',
                                          u'stop_radio'              :u'StopRadio',
                                          u'start_stop_radio'  :u'ToggleStartStop',
                                          u'ch+'                            :u'ChannelUp',
@@ -42,7 +38,6 @@ class FunctionConfig:
                                          u'v-'                              :u'VolumeDown',
                                          u'mute'                          :u'Mute',
                                          u'create_mythfmmenu':u'CreateMythfmMenu'}
-                                         #~ u'':u'',
         self.call_list = []
         for v in self.functioncalls.values():
             self.call_list.append(v)
@@ -158,6 +153,55 @@ class FunctionConfig:
 
 
     # end check_dependencies()
+
+    def detect_radiodevice(self):
+        video_devs = []
+        for f in os.listdir('/dev/'):
+            if f[:5] == 'video':
+                video_devs.append(f)
+
+        audio_cards = {}
+        for id in range(len(rfcalls().get_alsa_cards())):
+            audio_cards[id] = rfcalls().query_udev_path(u'/dev/snd/controlC%s' % id, 'sound')
+
+        self.radio_devs = []
+        for f in os.listdir('/dev/'):
+            if f[:5] == 'radio':
+                devno = int(f[5:])
+                radio_card = {}
+                radio_card['radio_device'] = u'/dev/%s' % f
+                radio_card['udevpath'] = rfcalls().query_udev_path('/dev/%s' % f, 'video4linux')
+                if 'video%s' % devno in video_devs:
+                    radio_card['video_device'] = u'/dev/video%s' % devno
+
+                else:
+                    radio_card['video_device'] = None
+
+                if 'video%s' % (devno + 24) in video_devs:
+                    radio_card['radio_out'] = u'/dev/video%s' % (devno + 24)
+                    radio_card['radio_cardtype'] = 0
+                    self.radio_devs.append(radio_card)
+                    continue
+
+                if radio_card['udevpath'] == None:
+                    radio_card['radio_out'] = None
+                    radio_card['radio_cardtype'] = 2
+                    self.radio_devs.append(radio_card)
+                    continue
+
+                for id in range(len(rfcalls().get_alsa_cards())):
+                    if audio_cards[id] == radio_card['udevpath']:
+                        radio_card['radio_out'] = rfcalls().get_alsa_cards(id)
+                        radio_card['radio_cardtype'] = 1
+                        break
+
+                else:
+                    radio_card['radio_out'] = self.select_card
+                    radio_card['radio_cardtype'] = 2
+
+                self.radio_devs.append(radio_card)
+
+    # end detect_radiodevice()
 
     def get_alsa(self):
 
