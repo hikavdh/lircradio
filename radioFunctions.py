@@ -55,6 +55,13 @@ class FunctionConfig:
         try:
             global alsaaudio
             import alsaaudio
+            try:
+                x = alsaaudio.pcms()
+                self.alsa_version = '0.8'
+
+            except:
+                self.alsa_version = '0.7'
+
         except:
             print 'You need to install the pyalsaaudio module\n'
             print 'Alsa (and radio) support will be disabled\n'
@@ -251,7 +258,11 @@ class FunctionConfig:
 
                     if len(mixer.volumecap()) > 0:
                         try:
-                            x = mixer.getvolume('playback')
+                            if self.alsa_version == '0.7':
+                                x = mixer.getvolume('playback')
+                            elif self.alsa_version == '0.8':
+                                x = mixer.getvolume(alsaaudio.PCM_PLAYBACK)
+
                             self.alsa_cards[cid]['mixers'][name][mid]['controls'].append('volume')
                             self.alsa_cards[cid]['mixers'][name][mid]['volume'] = x
 
@@ -259,7 +270,11 @@ class FunctionConfig:
                             pass
 
                         try:
-                            x = mixer.getvolume('capture')
+                            if self.alsa_version == '0.7':
+                                x = mixer.getvolume('capture')
+                            elif self.alsa_version == '0.8':
+                                x = mixer.getvolume(alsaaudio.PCM_CAPTURE)
+
                             self.alsa_cards[cid]['mixers'][name][mid]['controls'].append('capture')
                             self.alsa_cards[cid]['mixers'][name][mid]['capture'] = x
 
@@ -866,10 +881,16 @@ class RadioFunctions:
             return
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
-            return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume('playback')
+            if config.alsa_version == '0.7':
+                return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume('playback')
+            elif config.alsa_version == '0.8':
+                return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume(alsaaudio.PCM_PLAYBACK)
 
         if (not playback) and 'capture' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
-            return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume('capture')
+            if config.alsa_version == '0.7':
+                return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume('capture')
+            elif config.alsa_version == '0.8':
+                return alsaaudio.Mixer(mixer_ctrl, id, cardnr).getvolume(alsaaudio.PCM_CAPTURE)
 
         return None
 
@@ -881,12 +902,22 @@ class RadioFunctions:
 
         if playback and 'volume' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             log('Setting playbackvolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
-            alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'playback')
+            if config.alsa_version == '0.7':
+                alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'playback')
+
+            elif config.alsa_version == '0.8':
+                alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = alsaaudio.PCM_PLAYBACK)
+
             config.save_value('%s_%s_Volume' % (config.alsa_cards[cardnr]['name'], mixer_ctrl),volume)
 
         elif (not playback) and 'capture' in config.alsa_cards[cardnr]['mixers'][mixer_ctrl][id]['controls']:
             log('Setting capturevolume for %s on %s to %s.' % (mixer_ctrl, config.alsa_cards[cardnr]['name'], volume), 16)
-            alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'capture')
+            if config.alsa_version == '0.7':
+                alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = 'capture')
+
+            elif config.alsa_version == '0.8':
+                alsaaudio.Mixer(mixer_ctrl, id, cardnr).setvolume(volume, direction = alsaaudio.PCM_CAPTURE)
+
             config.save_value('%s_%s_Volume' % (config.alsa_cards[cardnr]['name'], mixer_ctrl),volume)
 
     # end set_volume()
