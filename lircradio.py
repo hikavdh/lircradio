@@ -19,8 +19,8 @@ description_text = """
 
 """
 
-import sys, io, os, pwd
-import re, codecs, locale
+import sys, io, os, datetime, time
+import re, codecs, locale, pwd
 import socket, argparse
 from stat import *
 from threading import Thread
@@ -29,12 +29,12 @@ try:
     from subprocess32 import *
 except:
     from subprocess import *
-try:
-    from radioFunctions import config as rfconf
-    from radioFunctions import RadioFunctions as rfcalls
-except:
-    print "I cannot load radioFunctions.py. Make sure it's in the same directory!"
-    sys.exit(2)
+#~ try:
+    #~ from radioFunctions import config as rfconf
+    #~ from radioFunctions import RadioFunctions as rfcalls
+#~ except:
+    #~ print "I cannot load radioFunctions.py. Make sure it's in the same directory!"
+    #~ sys.exit(2)
 
 # check Python version
 if sys.version_info[:2] < (2,6):
@@ -44,46 +44,35 @@ if sys.version_info[:2] < (2,6):
 elif sys.version_info[:2] >= (3,0):
     sys.stderr.write("lircradio does not support Pyton 3 or higher.\nExpect errors while we proceed\n")
 
-if rfconf.version()[:2] < (0,2):
-    sys.stderr.write("lircradio requires radioFunctions 0.2 or higher\n")
-    sys.exit(2)
-
 class Log(Thread):
     def __init__(self):
         Thread.__init__(self)
-        self.quit = False
         self.log_level = 29
         self.verbose = True
-
-    def run(self, log_file):
-        self.log_file = log_file
         self.log_queue = Queue()
-        self.log_output = config.open_file(log_file, mode = 'ab')
+        self.log_output = None
+        self.stderr_write = None
+        self.stderr_read = None
+
+    def run(self):
+        self.log_queue.put(u'Opening Logfile: %s\n' % config.log_file)
+        self.log_output = config.open_file(config.log_file, mode = 'ab')
+        for p in range(config.plugin_count):
+            config.pi_conf[p].log_queue = self.log_queue
+            config.pi_conf[p].stderr_write = self.stderr_write
 
         try:
             while True:
-                if self.quit:
-                    if self.stderr_write != None:
-                        self.stderr_write.close()
-                        self.stderr_write = None
-
-                    elif self.stderr_read != None:
-                            self.stderr_read.close()
-                            self.stderr_read = None
-
-                    if self.log_queue != None and self.log_queue.empty():
-                        self.log_queue = None
-
-                    if self.log_queue == None and self.stderr_read == None:
-                        return(0)
-
                 try:
                     if self.log_queue != None:
                         byteline = self.log_queue.get()
                         if isinstance(byteline, (str,unicode)):
+                            if byteline == 'quit':
+                                return(0)
+
                             self.log(byteline)
 
-                        if isinstance(byteline, (list,tuple)):
+                        elif isinstance(byteline, (list,tuple)):
                             if len(byteline) == 1:
                                 self.log(byteline[0])
 
@@ -91,36 +80,31 @@ class Log(Thread):
                                 self.log(byteline[0], byteline[1])
 
                             elif len(byteline) > 2:
-                                self.log(byteline[0], byteline[1], byteline[2])
+                                self.writelog(byteline[0], byteline[1], byteline[2])
 
                 except:
                     pass
 
-                try:
-                    if self.stderr_read != None:
-                        byteline = self.stderr_read.readline(1)
-                        self.log(byteline)
-
-                except:
-                    pass
-
-            self.rotate_log()
+                self.rotate_log()
 
         except:
             err_obj = sys.exc_info()[2]
-            log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
+            self.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
 
             while True:
                 err_obj = err_obj.tb_next
                 if err_obj == None:
                     break
 
-                log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
+                self.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
 
-            log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+            self.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
             return(99)
 
-    def log(message, log_level = 1, log_target = 3):
+    def log(self, message, log_level = 1, log_target = 3):
+        self.log_queue.put([message, log_level, log_target])
+
+    def writelog(self, message, log_level = 1, log_target = 3):
         """
         Log messages to log and/or screen
         """
@@ -140,31 +124,58 @@ class Log(Thread):
             self.log_output.write(message.encode("utf-8"))
 
     def rotate_log(self):
-        if  self.log_output == None or self.log_file == '':
+        if  self.log_output == None or config.log_file == '':
             return
 
         self.log_output.flush()
-        if os.stat(self.log_file).st_size < config.max_logsize:
+        if os.stat(config.log_file).st_size < config.max_logsize:
             return
 
         self.log_output.close()
-        if os.access('%s.%s' % (self.log_file, config.max_logcount), os.F_OK):
-            os.remove('%s.%s' % (self.log_file, config.max_logcount))
+        if os.access('%s.%s' % (config.log_file, config.max_logcount), os.F_OK):
+            os.remove('%s.%s' % (config.log_file, config.max_logcount))
 
         for i in range(self.max_logcount - 1, 0, -1):
-            if os.access('%s.%s' % (self.log_file, i), os.F_OK):
-                os.rename('%s.%s' % (self.log_file, i), '%s.%s' % (self.log_file, i + 1))
+            if os.access('%s.%s' % (config.log_file, i), os.F_OK):
+                os.rename('%s.%s' % (config.log_file, i), '%s.%s' % (config.log_file, i + 1))
 
-        os.rename(self.log_file, '%s.1' % (self.log_file))
+        os.rename(config.log_file, '%s.1' % (config.log_file))
 
-        self.log_output =  config.open_file(log_file, mode = 'ab')
+        self.log_output =  config.open_file(config.log_file, mode = 'ab')
 
     def open_stderr_filehandles(self):
+        self.stderr_fifo = '/tmp/lircradio_stderr_fifo'
+        self.stderr_listner = Listen_to_StdErr()
+        x = FiFo_Activator(self.stderr_fifo, 'stderr')
+        x.start()
+        self.stderr_listner.start()
+
+        # Opening the read handle to the fifo
+        try:
+            self.stderr_read = io.FileIO(self.stderr_fifo, mode = 'r')
+
+        except:
+            self.log('Error: %s reading stderr_fifo: %s\n' % (sys.exc_info()[1], self.stderr_fifo),0)
+            return(1)
+
+        # Opening the write handle to the fifo
+        try:
+            self.stderr_write =  io.FileIO(self.stderr_fifo, mode = 'w')
+
+        except:
+            self.log('Error writing to stderr_fifo: %s\n' % self.stderr_fifo, 0)
+            return(1)
+
+# end Log()
+log = Log()
+
+class Listen_to_StdErr(Thread):
+    def __init__(self):
+        Thread.__init__(self)
         # Checking out the fifo file
         try:
             tmpval = os.umask(0115)
-            stderr_fifo = '/tmp/lircradio_stderr_fifo'
-            for f in (stderr_fifo,):
+            for f in (log.stderr_fifo,):
                 if os.access(f, os.F_OK):
                     if not S_ISFIFO(os.stat(f).st_mode):
                          os.remove(f)
@@ -177,31 +188,81 @@ class Log(Thread):
                     os.mkfifo(f, 0662)
 
         except:
-            log('Error creating stderr_fifo: %s\n' % stderr_fifo, 0)
+            log.log('Error creating stderr_fifo: %s\n' % log.stderr_fifo, 0)
 
         os.umask(tmpval)
 
-        # Opening the read handle to the fifo
+    def run(self):
+        byteline = ''
+        byte = ''
         try:
-            self.stderr_read = config.open_file(stderr_fifo, mode = 'r', buffering = None)
+            while True:
+                try:
+                    if log.stderr_read != None:
+                        byte = log.stderr_read.readline(1)
+
+                except:
+                    pass
+
+                if byte == None or (byte == '\n' and byteline == '') or (byte == ' ' and byteline == ''):
+                    continue
+
+                elif byte != '\n':
+                    byteline += byte
+                    continue
+
+                elif byteline.strip().lower() == 'start':
+                    log.log('Starting stderr Listener on %s\n'% log.stderr_fifo, 1)
+                    byteline = ''
+                    continue
+
+                elif byteline.strip().lower() == 'quit' or self.quit:
+                    log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
+                    return(0)
+
+                log.log('%s\n' % byteline)
+                byteline = ''
 
         except:
-            log('Error reading stderr_fifo: %s\n' % stderr_fifo,0)
-            return(1)
+            err_obj = sys.exc_info()[2]
+            log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
 
-        # Opening the write handle to the fifo
-        try:
-            self.stderr_write = config.open_file(stderr_fifo, mode = 'w', buffering = None)
+            while True:
+                err_obj = err_obj.tb_next
+                if err_obj == None:
+                    break
 
-        except:
-            log('Error writing to stderr_fifo: %s\n' % stderr_fifo, 0)
-            return(1)
+                log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
 
-    def close(self):
-        self.quit = True
+            log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+            return(99)
 
-# end Log()
-log = Log()
+        log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
+
+# end Listen_to_StdErr()
+
+class FiFo_Activator(Thread):
+    def __init__(self, fifo, name):
+        Thread.__init__(self)
+        self.fifo = fifo
+        self.name = name
+
+    def run(self):
+        fp = '/tmp/' + pwd.getpwuid(os.getuid())[0] + '-' + self.name + '-start.sh'
+        if os.access(fp, os.F_OK):
+            os.remove(fp)
+
+        f =io.open(fp, 'wb')
+        f.write('#!/bin/bash\n')
+        f.write('echo "start" > %s\n' % self.fifo)
+        f.write('\n')
+        f.close()
+        os.chmod(fp, 0700)
+        call([fp])
+        time.sleep(1)
+        os.remove(fp)
+
+# end FiFo_Activator()
 
 class Configure:
     """This class holds all configuration details and manages file IO"""
@@ -247,12 +308,12 @@ class Configure:
         self.etc_dir = u'/etc/lircradio'
         self.config_file =u'/radioFunctions.conf'
         self.log_file = u'%s/lircradio.log' % self.ivtv_dir
-        self.myth_menu_file = 'fmmenu.xml'
         self.opt_dict['verbose'] = False
 
         # Initialising fifo variables
         self.opt_dict['fifo_file'] = u'/tmp/%s-fiforadio' % self.username
         self.opt_dict['lirc_id'] = u'lircradio'
+        self.opt_dict['case_sensitive'] = False
         self.fifo_read = None
         self.fifo_write = None
         self.ircat_pid = None
@@ -261,62 +322,25 @@ class Configure:
                                          u'reboot'                      :u'Reboot',
                                          u'hibernate'                :u'Hibernate',
                                          u'suspend'                    :u'Suspend'}
+        self.call_list = {}
+        self.call_list_lower = {}
+        for v in self.functioncalls.values():
+            self.call_list[v] = -1
+            self.call_list_lower[v.lower()] = -1
+
+        self.function_commands = {}
         self.bash_commands = {}
         self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
         self.plugin_list = {0:'testPlugin',
                                      1:'radioFunctions'}
+
+        self.__CONFIG_SECTIONS__ = {-1: {1: u'Configuration', 2: u'Function Calls'}}
+        self.__BOOL_VARS__ = ['write_info_files', 'verbose', 'case_sensitive']
+        self.__INT_VARS__ = ['log_level']
+        self.__STR_VARS__ = ['log_file', 'fifo_file', 'lirc_id']
+        self.__NONE_STR_VARS__ = []
+
         self.get_plugins()
-
-
-        # Initialising radio and audio
-        self.dev_types = {}
-        self.dev_types[0] = 'ivtv radio device'
-        self.dev_types[1] = 'radio with alsa device'
-        self.dev_types[2] = 'radio cabled to an audio card'
-        self.opt_dict['myth_backend'] = None
-        self.opt_dict['radio_cardtype'] = -1
-        self.opt_dict['radio_device']  = None
-        self.opt_dict['radio_out'] = None
-        self.opt_dict['source_switch'] = None
-        self.opt_dict['source'] = None
-        self.opt_dict['source_mixer'] = None
-
-        rfconf.check_dependencies(self.ivtv_dir)
-        # Detecting radio and audio defaults
-        self.select_card = u'You have to set audio-card to where the tv-card is cabled to: ['
-        for a in rfcalls().get_alsa_cards():
-            self.select_card += u'%s, ' % a
-
-        self.select_card = self.select_card[0: -2] + u']'
-        self.detect_radiodevice()
-        if len(self.radio_devs) > 0:
-            for card in self.radio_devs:
-                if card['radio_cardtype'] == 0:
-                    # There is a ivtv-radiocard
-                    self.opt_dict['radio_cardtype'] = card['radio_cardtype']
-                    self.opt_dict['radio_device']  = card['radio_device']
-                    self.opt_dict['radio_out'] = card['radio_out']
-                    self.opt_dict['video_device'] =card['video_device']
-
-            else:
-                #We take the first
-                self.opt_dict['radio_cardtype'] = self.radio_devs[0]['radio_cardtype']
-                self.opt_dict['radio_device']  = self.radio_devs[0]['radio_device']
-                self.opt_dict['radio_out'] = self.radio_devs[0]['radio_out']
-                self.opt_dict['video_device'] =self.radio_devs[0]['video_device']
-
-        self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
-        for m in ('Front', 'Master', 'PCM'):
-            if m in rfcalls().get_alsa_mixers(0):
-                self.opt_dict['audio_mixer'] = m
-                break
-
-        else:
-            self.opt_dict['audio_mixer'] = rfcalls().get_alsa_mixers(0, 0)
-
-        self.__CONFIG_SECTIONS__ = { 1: u'Configuration', \
-                                                            2: u'Radio Channels', \
-                                                            3: u'Function Calls'}
 
     # end Init()
 
@@ -561,17 +585,31 @@ class Configure:
 
             #~ try:
             if a[0] in self.plugin_list.values() and not a[0] in self.plugins:
-                pi_cnt += 1
                 if a[0] == self.plugin_list[1]:
-                    self.plugins.append(1)
-                    from radioFunctions import rfconf
-                    self.pi_conf[pi_cnt] = rfconf
+                    self.plugins.append(a[0])
+                    from radioFunctions import config as piconf
+                    self.pi_conf[pi_cnt] = piconf
                     from radioFunctions import RadioFunctions
                     self.pi_func[pi_cnt] = RadioFunctions
 
+                pi_cnt += 1
 
-             #~ except:
-                #~ print "I cannot load %s.py. Make sure it's in the same directory!" % self.plugins[pi_cnt]
+            #~ except:
+                #~ print "Unable to load %s.py. Make sure it's in the same directory!" % self.plugins[pi_cnt]
+
+        self.plugin_count = pi_cnt
+        for p in range(self.plugin_count):
+            self.pi_conf[p].log_queue = None
+            self.pi_conf[p].stderr_write = None
+            self.pi_conf[p].init_plugin(self.ivtv_dir, self.plugins)
+            self.__CONFIG_SECTIONS__ [p] = self.pi_conf[p].__CONFIG_SECTIONS__
+            self.__BOOL_VARS__.extend(self.pi_conf[p].__BOOL_VARS__)
+            self.__INT_VARS__.extend(self.pi_conf[p].__INT_VARS__)
+            self.__STR_VARS__.extend(self.pi_conf[p].__STR_VARS__)
+            self.__NONE_STR_VARS__.extend(self.pi_conf[p].__NONE_STR_VARS__)
+            for v in self.pi_conf[p].functioncalls.values():
+                self.call_list[v] = p
+                self.call_list_lower[v.lower()] = p
 
     # end get_plugins()
 
@@ -622,48 +660,14 @@ class Configure:
                         metavar = '<name>',
                         help = 'name of the lirc ID to respond to (%s)' % self.opt_dict['lirc_id'])
 
-        parser.add_argument('-r', '--card-type', type = str, default = None, dest = 'radio_cardtype',
-                        metavar = '<device>',
-                        help = 'type of radio-device/ (%s)\n' % self.opt_dict['radio_cardtype'] +
-                                    '   0 = ivtv (with /dev/video24 radio-out)\n' +
-                                    '   1 = with corresponding alsa device\n' +
-                                    '   2 = cabled to an audiocard\n' +
-                                    '  -1 = No radiocard' )
+        parser.add_argument('-s', '--case-sensitive', action = 'store_true', default = None, dest = 'case_sensitive',
+                        help = 'Make all commands case sensitive.')
 
-        parser.add_argument('-R', '--radio-device', type = str, default = None, dest = 'radio_device',
-                        metavar = '<device>',
-                        help = 'name of the radio-device in /dev/ (%s)\n' % self.opt_dict['radio_device'] )
+        #~ parser.add_argument('-d', '--daemon', action = 'store_true', default = None, dest = 'daemon',
+                        #~ help = 'run as a daemon.')
 
-        parser.add_argument('-A', '--radio-out', type = str, default = None, dest = 'radio_out',
-                        metavar = '<device>',
-                        help = 'name of the audio-out-device in /dev/ or\n' +
-                                    'the alsa device (%s)' % self.opt_dict['radio_out'])
-
-        parser.add_argument('-T', '--video-device', type = str, default = None, dest = 'video_device',
-                        metavar = '<device>',
-                        help = 'name of the corresponding video-device in /dev/\n(%s)' % self.opt_dict['video_device'] )
-
-        parser.add_argument('-B', '--myth-backend', type = str, default = None, dest = 'myth_backend',
-                        metavar = '<hostname>',
-                        help = 'backend dns hostname. (%s)\nSet to \'None\' string to disable checking.' % self.opt_dict['myth_backend'])
-
-        parser.add_argument('-a', '--audio-card', type = str, default = None, dest = 'audio_card',
-                        metavar = '<cardname>',
-                        help = 'The audiocard name to play the radio. (%s)\n' % self.opt_dict['audio_card'])
-
-        parser.add_argument('-m', '--audio-mixer', type = str, default = None, dest = 'audio_mixer',
-                        metavar = '<mixername>',
-                        help = 'The mixer name. (%s)\n' % self.opt_dict['audio_mixer'])
-
-        parser.add_argument('--list-alsa-cards', action = 'store_true', default = False, dest = 'list_alsa',
-                        help = 'Give a list of the alsa-audio cards on this system')
-
-        parser.add_argument('--list-mixers', action = 'store_true', default = False, dest = 'list_mixers',
-                        help = 'Give a list of the available mixer-controls for the given card')
-
-        parser.add_argument('-M', '--create-menu', action = 'store_true', default = False, dest = 'create_menu',
-                        help = 'create a Radiomenu file %s in %s\n' % (self.myth_menu_file, self.ivtv_dir) +
-                                    'with the defined channels to be used in MythTV.')
+        for p in range(self.plugin_count):
+            parser = self.pi_conf[p].init_parser(parser)
 
         # Handle the sys.exit(0) exception on --help more gracefull
         try:
@@ -694,18 +698,13 @@ class Configure:
                 log.log('configfile: %s is not readable!\n' % file, 1 )
 
         if f == None:
-            x = self.read_radioFrequencies_File()
-            if x == False:
-                log.log('Could not find an accessible configfile!\n', 1)
-
-            else:
-                self.write_config(True)
-
+            log.log('Could not find an accessible configfile!\n', 1)
             return(x)
 
         self.args.config_file = file
         f.seek(0,0)
         type = 0
+        plugin = -1
         ch_num = 0
         for byteline in f.readlines():
             try:
@@ -715,11 +714,13 @@ class Configure:
 
                 # Look for section headers
                 config_title = re.search('\[(.*?)\]', line)
-                if config_title != None and (config_title.group(1) in self.__CONFIG_SECTIONS__.values()):
-                    for i, v in self.__CONFIG_SECTIONS__.items():
-                        if v == config_title.group(1):
-                            type = i
-                            continue
+                if config_title != None:
+                    for p in range(-1, self.plugin_count):
+                        for i, v in self.__CONFIG_SECTIONS__[p].items():
+                            if v == config_title.group(1):
+                                type = i
+                                plugin = p
+                                break
 
                     continue
 
@@ -729,250 +730,194 @@ class Configure:
                     continue
 
                 # Read Configuration options
-                elif type == 1:
-                    try:
-                        # Strip the name from the value
-                        a = line.split('=',1)
-                        # Boolean values
-                        if a[0].lower().strip() in ('write_info_files', 'verbose', 'daemon'):
-                            if len(a) == 1:
-                                self.opt_dict[a[0].lower().strip()] = True
+                elif plugin == -1:
+                    if type == 1:
+                        try:
+                            # Strip the name from the value
+                            a = line.split('=',1)
+                            # Boolean values
+                            if a[0].lower().strip() in self.__BOOL_VARS__:
+                                if len(a) == 1:
+                                    self.opt_dict[a[0].lower().strip()] = True
 
-                            elif a[1].lower().strip() in ('true', '1', 'on' ):
-                                self.opt_dict[a[0].lower().strip()] = True
-
-                            else:
-                                self.opt_dict[a[0].lower().strip()] = False
-
-                        # Values that can be None
-                        elif a[0].lower().strip() in ('radio_device', 'radio_out', 'video_device', 'myth_backend','source_switch' , 'source','source_mixer'):
-                            self.opt_dict[a[0].lower().strip()] = None if (len(a) == 1 or a[1].lower().strip() == 'none') else a[1].strip()
-
-                        elif len(a) == 2:
-                            #Integer values
-                            if a[0].lower().strip() in ('log_level', 'radio_cardtype'):
-                                try:
-                                    int(a[1])
-
-                                except ValueError:
-                                    self.opt_dict[a[0].lower().strip()] = 0
+                                elif a[1].lower().strip() in ('true', '1', 'on' ):
+                                    self.opt_dict[a[0].lower().strip()] = True
 
                                 else:
-                                    self.opt_dict[a[0].lower().strip()] = int(a[1])
+                                    self.opt_dict[a[0].lower().strip()] = False
 
-                            #String values
-                            else:
-                                self.opt_dict[a[0].lower().strip()] = a[1].strip()
+                            # Values that can be None
+                            elif a[0].lower().strip() in self.__NONE_STR_VARS__:
+                                self.opt_dict[a[0].lower().strip()] = None if (len(a) == 1 or a[1].lower().strip() == 'none') else a[1].strip()
 
-                        else:
-                            log.log('Ignoring incomplete Options line in config file %s: %r\n' % (file, line))
+                            elif len(a) == 2:
+                                #Integer values
+                                if a[0].lower().strip() in self.__INT_VARS__:
+                                    try:
+                                        int(a[1])
 
-                    except Exception:
-                        log.log('Invalid Options line in config file %s: %r\n' % (file, line))
-                        continue
-
-                # Read the channel stuff
-                if type == 2:
-                    try:
-                        # Strip the name from the frequency
-                        a = line.split('=',1)
-                        if len(a) != 2:
-                            log.log('Ignoring incomplete Channel line in config file %s: %r\n' % (file, line))
-                            continue
-
-                        ch_num += 1
-                        rfconf.frequencies[float(a[0].strip())] = ch_num
-                        rfconf.channels[ch_num] = {}
-                        rfconf.channels[ch_num]['frequency'] = float(a[0].strip())
-                        rfconf.channels[ch_num]['title'] = unicode(a[1].strip())
-                        if rfconf.channels[ch_num]['title'] == '':
-                            rfconf.channels[ch_num]['title'] = u'Frequency %s' % a[0].strip()
-
-                    except Exception:
-                        log.log('Invalid Channel line in config file %s: %r\n' % (file, line))
-                        continue
-
-                # Read the lirc IDs
-                if type == 3:
-                    try:
-                        # Strip the lircname from the command
-                        a = line.split('=',1)
-                        if(len(a) == 1) and (unicode(a[0].strip()) in rfconf.call_list):
-                            rfconf.functioncalls[unicode(a[0].strip())] = unicode(a[0].strip())
-
-                        elif (len(a) == 2) and (unicode(a[1].strip()) in rfconf.call_list):
-                            rfconf.functioncalls[unicode(a[0].strip())] = unicode(a[1].strip())
-
-                        elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
-                            self.external_commands[unicode(a[0].strip())] = []
-                            quote_cnt = 0
-                            quote_cmd = ''
-                            word_cmd = ''
-                            aa = unicode(a[1].strip())[5:].strip()
-                            for c in range(len(aa)):
-                                if quote_cnt == 1:
-                                    if aa[c] == '"':
-                                        self.external_commands[unicode(a[0].strip())].append(quote_cmd)
-                                        quote_cnt = 0
-                                        quote_cmd = ''
-                                        continue
+                                    except ValueError:
+                                        self.opt_dict[a[0].lower().strip()] = 0
 
                                     else:
-                                        quote_cmd = u'%s%s' % (quote_cmd, aa[c])
-                                        continue
+                                        self.opt_dict[a[0].lower().strip()] = int(a[1])
 
-                                elif quote_cnt == 0:
-                                    if aa[c] == '"':
-                                        quote_cnt = 1
-                                        quote_cmd = ''
+                                #String values
+                                elif a[0].lower().strip() in self.__STR_VARS__:
+                                    self.opt_dict[a[0].lower().strip()] = a[1].strip()
 
-                                    elif aa[c] != ' ':
-                                        word_cmd = u'%s%s' % (word_cmd, aa[c])
-                                        continue
+                                else:
+                                    log.log('Ignoring Options line in config file %s: %r\n' % (file, line))
 
-                                if word_cmd != '':
-                                    self.external_commands[unicode(a[0].strip())].append(word_cmd)
+                            else:
+                                log.log('Ignoring incomplete Options line in config file %s: %r\n' % (file, line))
+
+                        except Exception:
+                            log.log('Invalid Options line in config file %s: %r\n' % (file, line))
+                            continue
+
+                    # Read the lirc IDs
+                    if type == 2:
+                        try:
+                            # Strip the lircname from the command
+                            a = line.split('=',1)
+                            if self.opt_dict['case_sensitive']:
+                                if(len(a) == 1) and (unicode(a[0].strip()) in self.call_list.keys()):
+                                    self.function_commands[unicode(a[0].strip())] = {}
+                                    self.function_commands[unicode(a[0].strip())]['plugin'] = self.call_list[unicode(a[0].strip())]
+                                    self.function_commands[unicode(a[0].strip())]['function'] = unicode(a[0].strip())
+
+                                elif (len(a) == 2) and (unicode(a[1].strip()) in self.call_list.keys()):
+                                    self.function_commands[unicode(a[0].strip())] = {}
+                                    self.function_commands[unicode(a[0].strip())]['plugin'] = self.call_list[unicode(a[1].strip())]
+                                    self.function_commands[unicode(a[0].strip())]['function'] = unicode(a[1].strip())
+
+                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
+                                    self.external_commands[unicode(a[0].strip())] = []
+                                    quote_cnt = 0
+                                    quote_cmd = ''
                                     word_cmd = ''
-                        elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
-                            bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
-                        else:
-                            log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
+                                    aa = unicode(a[1].strip())[5:].strip()
+                                    for c in range(len(aa)):
+                                        if quote_cnt == 1:
+                                            if aa[c] == '"':
+                                                self.external_commands[unicode(a[0].strip())].append(quote_cmd)
+                                                quote_cnt = 0
+                                                quote_cmd = ''
+                                                continue
 
-                    except Exception:
-                        log.log('Invalid Lirc line in config file %s: %r\n' % (file, line))
-                        continue
+                                            else:
+                                                quote_cmd = u'%s%s' % (quote_cmd, aa[c])
+                                                continue
+
+                                        elif quote_cnt == 0:
+                                            if aa[c] == '"':
+                                                quote_cnt = 1
+                                                quote_cmd = ''
+
+                                            elif aa[c] != ' ':
+                                                word_cmd = u'%s%s' % (word_cmd, aa[c])
+                                                continue
+
+                                        if word_cmd != '':
+                                            self.external_commands[unicode(a[0].strip())].append(word_cmd)
+                                            word_cmd = ''
+                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
+                                    bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
+                                else:
+                                    log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
+
+                            else:
+                                if(len(a) == 1) and (unicode(a[0].strip().lower()) in self.call_list_lower.keys()):
+                                    self.function_commands[unicode(a[0].strip().lower())] = {}
+                                    self.function_commands[unicode(a[0].strip().lower())]['plugin'] = self.call_list[unicode(a[0].strip())]
+                                    self.function_commands[unicode(a[0].strip().lower())]['function'] = unicode(a[0].strip().lower())
+
+                                elif (len(a) == 2) and (unicode(a[1].strip().lower()) in self.call_list_lower.keys()):
+                                    self.function_commands[unicode(a[0].strip().lower())] = {}
+                                    self.function_commands[unicode(a[0].strip().lower())]['plugin'] = self.call_list[unicode(a[1].strip())]
+                                    self.function_commands[unicode(a[0].strip().lower())]['function'] = unicode(a[1].strip().lower())
+
+                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
+                                    self.external_commands[unicode(a[0].strip())] = []
+                                    quote_cnt = 0
+                                    quote_cmd = ''
+                                    word_cmd = ''
+                                    aa = unicode(a[1].strip())[5:].strip()
+                                    for c in range(len(aa)):
+                                        if quote_cnt == 1:
+                                            if aa[c] == '"':
+                                                self.external_commands[unicode(a[0].strip())].append(quote_cmd)
+                                                quote_cnt = 0
+                                                quote_cmd = ''
+                                                continue
+
+                                            else:
+                                                quote_cmd = u'%s%s' % (quote_cmd, aa[c])
+                                                continue
+
+                                        elif quote_cnt == 0:
+                                            if aa[c] == '"':
+                                                quote_cnt = 1
+                                                quote_cmd = ''
+
+                                            elif aa[c] != ' ':
+                                                word_cmd = u'%s%s' % (word_cmd, aa[c])
+                                                continue
+
+                                        if word_cmd != '':
+                                            self.external_commands[unicode(a[0].strip())].append(word_cmd)
+                                            word_cmd = ''
+                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
+                                    bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
+                                else:
+                                    log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
+
+
+                        except Exception:
+                            log.log('\nAn unexpected error has occured at line: %s: %s\n' %  (sys.exc_info()[2].tb_lineno, sys.exc_info()[1]), 0)
+                            log.log('Invalid Lirc line in config file %s: %r\n' % (file, line))
+                            continue
+
+                elif plugin in range(self.plugin_count):
+                    self.pi_conf[plugin].validate_config_line(type, line)
 
             except Exception as e:
                 log.log(u'Error reading Config\n')
                 continue
 
         f.close()
-
-        #~ self.write_config(True)
-        if len(rfconf.channels) == 0:
-            # There are no channels so looking for an old ~\.ivtv\radioFrequencies file
-            if not self.read_radioFrequencies_File():
-                # We scan for frequencies
-                self.freq_list = rfcalls().detect_channels(config.opt_dict['radio_device'])
-                if len(self.freq_list) == 0:
-                    return False
-
-                else:
-                    ch_num = 0
-                    for freq in self.freq_list:
-                        ch_num += 1
-                        rfconf.frequencies[freq] = ch_num
-                        rfconf.channels[ch_num] = {}
-                        rfconf.channels[ch_num]['frequency'] = freq
-                        rfconf.channels[ch_num]['title'] = 'Channel %s' % ch_num
 
         return True
 
     # end read_config()
 
-    def read_radioFrequencies_File(self):
-        """Check for an old RadioFrequencies file."""
-
-        if not os.access(self.ivtv_dir +  '/radioFrequencies', os.F_OK and os.R_OK) :
-            self.args.config_file = None
-            return False
-
-        f = self.open_file(self.ivtv_dir +  '/radioFrequencies')
-        if f == None:
-            self.args.config_file = None
-            return False
-
-        f.seek(0,0)
-        ch_num = 0
-        for byteline in f.readlines():
-            try:
-                line = self.get_line(f, byteline)
-                if not line:
-                    continue
-
-                # Read the channel stuff
-                try:
-                    # Strip the name from the frequency
-                    a = re.split(';',line)
-                    if len(a) != 2:
-                        continue
-
-                    ch_num += 1
-                    rfconf.frequencies[float(a[1].strip())] = ch_num
-                    rfconf.channels[ch_num] = {}
-                    rfconf.channels[ch_num]['title'] = a[0].strip()
-                    rfconf.channels[ch_num]['frequency'] = float(a[1].strip())
-                    if rfconf.channels[ch_num]['title'] == '':
-                        rfconf.channels[ch_num]['title'] = u'Frequency %s' % a[1].strip()
-
-                except Exception:
-                    log.log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
-                    continue
-
-            except Exception as e:
-                log.log(u'Error reading Config\n')
-                continue
-
-        f.close()
-
-        if len(rfconf.channels) == 0:
-            return False
-
-        return True
-
-    # end read_radioFrequencies_File()
-
     def validate_commandline(self):
         """Read the commandline and validate the values"""
-        def is_video_device(path):
-            if path == None or path.lower() == 'none':
-                return None
-
-            if (not os.access(path, os.F_OK and os.R_OK)):
-                return False
-
-            if ((os.major(os.stat(path).st_rdev)) != 81):
-                return False
-
-            return path
-
         if self.read_commandline() == 0:
              return(0)
 
         if self.args.version:
             print("The Netherlands (%s)" % self.version(True))
-            print("The Netherlands (%s)" % rfconf.version(True))
+            for p in range(self.plugin_count):
+                print("The Netherlands (%s)" % self.pi_conf[p].version(True))
+
             return(0)
 
         if self.args.description:
             print("The Netherlands (%s)" % self.version(True))
-            print("The Netherlands (%s)" % rfconf.version(True))
+            for p in range(self.plugin_count):
+                print("The Netherlands (%s)" % self.pi_conf[p].version(True))
+
             print(description_text)
             return(0)
 
+        for p in range(self.plugin_count):
+            x = self.pi_conf[p].commandline_queries(self.args, self.opt_dict)
+            if x != None:
+                return(x)
+
         conf_read = self.read_config()
-        if self.args.list_alsa:
-            print 'The available alsa audio-cards are:'
-            for c in rfcalls().get_alsa_cards():
-                print '    %s' % c
-
-            return(0)
-
-        if self.args.list_mixers:
-            if self.args.audio_card != None and self.args.audio_card in rfcalls().get_alsa_cards():
-                self.opt_dict['audio_card'] = self.args.audio_card
-
-            cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
-            print 'The available mixer controls for audio-card: %s are:' % self.opt_dict['audio_card']
-            for m in rfcalls().get_alsa_mixers(cardid):
-                print '    %s' % m
-
-            return(0)
-
-        if self.args.create_menu:
-            rfcalls().create_fm_menu_file(self.ivtv_dir, self.opt_dict['fifo_file'])
-            return(0)
-
         if self.args.verbose != None:
             self.opt_dict['verbose'] = self.args.verbose
             log.verbose = self.opt_dict['verbose']
@@ -990,7 +935,6 @@ class Configure:
         else:
             log_file = self.log_file
 
-        log.start(log_file)
         if self.args.log_file != None and log_file != self.args.log_file:
             log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, log_file), 0)
 
@@ -998,167 +942,61 @@ class Configure:
             log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.opt_dict['log_file'], log_file), 0)
 
         self.log_file = log_file
+        log.open_stderr_filehandles()
+        log.start()
         if self.args.fifo_file != None:
             self.opt_dict['fifo_file'] = self.args.fifo_file
 
         if self.args.lirc_id != None:
             self.opt_dict['lirc_id'] = self.args.lirc_id
 
-        #
-        if self.args.myth_backend != None:
-            self.opt_dict['myth_backend'] = self.args.myth_backend
+        if self.args.case_sensitive != None:
+            self.opt_dict['case_sensitive'] = self.args.case_sensitive
 
-        if self.opt_dict['myth_backend'] == None:
-            if rfcalls().query_backend(socket.gethostname()) != -2:
-                self.opt_dict['myth_backend'] = socket.gethostname()
+        for p in range(self.plugin_count):
+            x = self.pi_conf[p].validate_options(self.args)
+            if x != None:
+                return(x)
 
-        elif self.opt_dict['myth_backend'].lower().strip() == 'none':
-            self.opt_dict['myth_backend'] = None
+            for k, v in self.pi_conf[p].opt_dict.items():
+                if k not in self.opt_dict.keys():
+                    self.opt_dict[k] = v
 
-        if self.opt_dict['myth_backend'] != None and rfcalls().query_backend(self.opt_dict['myth_backend']) == -2:
-            log.log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
-            log.log('Run with --myth-backend None to disable checking!\n', 0)
-
-        if self.args.radio_cardtype != None:
-            self.opt_dict['radio_cardtype'] = self.args.radio_cardtype
-
-        if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
-            if self.args.radio_device != None:
-                x = is_video_device(self.args.radio_device)
-                if x != False:
-                    self.opt_dict['radio_device'] = x
-
-            x = is_video_device(self.opt_dict['radio_device'])
-            if x == False:
-                log.log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
-                self.opt_dict['radio_cardtype'] = None
-                self.opt_dict['radio_device'] = None
-                self.opt_dict['video_device'] = None
-                self.opt_dict['radio_out'] = None
-
-            else:
-                self.opt_dict['radio_device'] = x
-                udevpath =  rfcalls().query_udev_path( self.opt_dict['radio_device'], 'video4linux')
-                autodetect_card = None
-                for card in self.radio_devs:
-                    if card['udevpath'] == udevpath:
-                        autodetect_card = card
-                        self.opt_dict['radio_cardtype'] = card['radio_cardtype']
-                        break
-
-                else:
-                    log.log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
-                    self.opt_dict['radio_cardtype'] = None
-                    self.opt_dict['radio_device'] = None
-                    self.opt_dict['video_device'] = None
-                    self.opt_dict['radio_out'] = None
-
-        else:
-            self.opt_dict['radio_cardtype'] = None
-            self.opt_dict['radio_device'] = None
-            self.opt_dict['video_device'] = None
-            self.opt_dict['radio_out'] = None
-
-        if self.opt_dict['radio_cardtype'] != None:
-            if self.args.video_device != None:
-                self.opt_dict['video_device'] = self.args.video_device
-
-            udevpath =  rfcalls().query_udev_path( self.opt_dict['video_device'], 'video4linux')
-            if autodetect_card['udevpath'] != udevpath:
-                log.log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
-                self.opt_dict['video_device'] = autodetect_card['video_device']
-
-            if self.args.radio_out != None:
-                self.opt_dict['radio_out'] = self.args.radio_out
-
-            if self.opt_dict['radio_cardtype'] == 0:
-                udevpath =  rfcalls().query_udev_path( self.opt_dict['radio_out'], 'video4linux')
-                if autodetect_card['udevpath'] != udevpath:
-                    log.log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
-                    self.opt_dict['radio_out'] = autodetect_card['radio_out']
-
-            elif self.opt_dict['radio_cardtype'] == 1:
-                if autodetect_card['radio_out'] != self.opt_dict['radio_out']:
-                    log.log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
-                    self.opt_dict['radio_out'] = autodetect_card['radio_out']
-
-            elif self.opt_dict['radio_cardtype'] == 2 and self.opt_dict['radio_out'] == self.select_card:
-                log.log(self.select_card)
-
-        else:
-            self.opt_dict['radio_cardtype'] = -1
-            self.opt_dict['radio_device']  = None
-            self.opt_dict['radio_out'] = None
-            self.opt_dict['video_device'] = None
-
-        if self.args.audio_card != None:
-            if self.args.audio_card in rfcalls().get_alsa_cards():
-                self.opt_dict['audio_card'] = self.args.audio_card
-
-            else:
-                log.log('%s is not a recognized audiocard\n' % self.args.audio_card, 1)
-
-        if not self.opt_dict['audio_card'] in rfcalls().get_alsa_cards():
-            log.log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
-            self.opt_dict['audio_card'] = rfcalls().get_alsa_cards(0)
-
-        cardid = rfcalls().get_cardid(self.opt_dict['audio_card'])
-
-        if self.args.audio_mixer != None:
-            if self.args.audio_mixer in rfcalls().get_alsa_mixers(cardid):
-                self.opt_dict['audio_mixer'] = self.args.audio_mixer
-
-            else:
-                log.log('%s is not a recognized audiomixer]n' % self.args.audio_mixer, 1)
-
-        if not self.opt_dict['audio_mixer'] in rfcalls().get_alsa_mixers(cardid):
-            log.log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
-            self.opt_dict['audio_card'] = rfcalls().get_alsa_mixers(cardid, 0)
+        for p in range(self.plugin_count):
+            for k, v in self.opt_dict.items():
+                if k not in self.opt_dict.keys():
+                    self.pi_conf[p].opt_dict[k] = v
 
         self.write_opts_to_log()
         if self.args.configure:
             if self.opt_dict['radio_device'] == None:
                 log.log('You need an accesible radio-device to configure\n')
-                self.write_config(False)
+                self.write_config(True)
                 return(1)
             else:
-                self.write_config(True)
+                self.write_config(False)
                 return(0)
 
-        elif self.opt_dict['radio_out'] == self.select_card:
-            self.opt_dict['radio_out'] = None
+        #~ elif self.opt_dict['radio_out'] == self.select_card:
+            #~ self.opt_dict['radio_out'] = None
 
         if self.args.save_options:
-            self.write_config(False)
+            self.write_config(True)
             return(0)
 
-        if len(rfconf.channels) == 0 and self.opt_dict['radio_device'] != None:
-            log.log('There are no channels defined! Exiting!\n', 0)
-            log.log('Run with --card-type -1 to disable radio support!\n', 0)
-            log.log('or with --configure to probe for available frequencies!\n', 0)
-            return(1)
+        #~ if len(rfconf.channels) == 0 and self.opt_dict['radio_device'] != None:
+            #~ log.log('There are no channels defined! Exiting!\n', 0)
+            #~ log.log('Disable the radio plugin, \n', 0)
+            #~ log.log('run it with --card-type -1 to disable radio support!\n', 0)
+            #~ log.log('or with --configure to probe for available frequencies!\n', 0)
+            #~ return(1)
 
-        rfconf.opt_dict = self.opt_dict
-        if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
-            if not rfconf.set_mixer():
-                log.log('Error setting the mixer\n')
-                return(1)
+        #~ if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
+            #~ if not rfconf.set_mixer():
+                #~ log.log('Error setting the mixer\n')
+                #~ return(1)
 
     # end validate_commandline()
-
-    def validate_config(self):
-        if len(self.radio_devs) == 0:
-            print 'No radio devices found!\n'
-
-        elif len(self.radio_devs) == 1:
-            print 'Only one radio devices found of type %s!\n' % self.dev_types[self.radio_devs[0]['radio_cardtype']]
-
-        else:
-            print 'Select the radio device to use:\n'
-            for i in range(len(self.radio_devs)):
-                print
-
-    # end validate_config()
 
     def open_fifo_filehandles(self):
         # Checking out the fifo file
@@ -1180,6 +1018,8 @@ class Configure:
             log.log('Error creating fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
 
         os.umask(tmpval)
+        start = FiFo_Activator(self.opt_dict['fifo_file'], 'fifo')
+        start.start()
 
         # Opening the read handle to the fifo
         try:
@@ -1218,32 +1058,23 @@ class Configure:
         log.log(u'Starting lircradio',1, 2)
         log.log(u'Python versie: %s.%s.%s' % (sys.version_info[0], sys.version_info[1], sys.version_info[2]),1, 2)
         log.log(u'The Netherlands (%s)' % self.version(True), 1, 2)
-        log.log(u'The Netherlands (%s)' % rfconf.version(True), 1, 2)
-        log.log(u'log level = %s' % (rfconf.log.log_level), 1, 2)
+        log.log(u'log level = %s' % (log.log_level), 1, 2)
         log.log(u'config_file = %s' % (self.args.config_file), 1, 2)
         log.log(u'verbose = %s\n' % self.opt_dict['verbose'], 1, 2)
         log.log(u'fifo_file = %s\n' % self.opt_dict['fifo_file'], 1, 2)
         log.log(u'lirc_id = %s\n' % self.opt_dict['lirc_id'], 1, 2)
-        log.log(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'], 1, 2)
-        log.log(u'radio_device = %s\n' % self.opt_dict['radio_device'], 1, 2)
-        log.log(u'radio_out = %s\n' % self.opt_dict['radio_out'], 1, 2)
-        log.log(u'video_device = %s\n' % self.opt_dict['video_device'], 1, 2)
-        log.log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
-        log.log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
-        log.log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
-        log.log(u'source_switch = %s\n' % self.opt_dict['source_switch'], 1, 2)
-        log.log(u'source = %s\n' % self.opt_dict['source'], 1, 2)
-        #~ log.log(u'source_mixer = %s\n' % self.opt_dict['source_mixer'], 1, 2)
+        log.log(u'case_sensitive = %s\n' % self.opt_dict['case_sensitive'], 1, 2)
         log.log(u'',1, 2)
+        for p in range(self.plugin_count):
+            self.pi_conf[p].write_opts_to_log()
 
     # end write_opts_to_log()
 
-    def write_config(self, add_channels = None):
+    def write_config(self, copy_old = False):
         """
         Save the channel info and the default options
-        if add_channels is False or None we copy over the Channels sections
-        If add_channels is None we convert the channel info to the new form
-        if add_channels is True we create a fresh channels section
+        if copy_old is True we only create the Configuration section and copy over the other sections
+        if copy_old is False we create all section afresh
         """
         if self.args.config_file == None:
             self.args.config_file = self.ivtv_dir + self.config_file
@@ -1264,7 +1095,7 @@ class Configure:
         f.write(u'# To edit you beter run --save-options with all the desired defaults.\n')
         f.write(u'# Options not shown here can not be set this way.\n')
         f.write(u'\n')
-        f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[1])
+        f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[-1][1])
         if self.write_info_files:
             f.write(u'write_info_files = True\n')
             f.write(u'\n')
@@ -1278,111 +1109,18 @@ class Configure:
         f.write(u'#  8 = log Channel changes\n')
         f.write(u'# 16 = log Volume changes\n')
         f.write(u'# 32 = log all radiofunction calls, Mainly for debugging\n')
-        f.write(u'log_file = %s\n' % rfconf.log_file)
-        f.write(u'log_level = %s\n' % rfconf.log_level)
+        f.write(u'log_file = %s\n' % self.log_file)
+        f.write(u'log_level = %s\n' % log.log_level)
         f.write(u'verbose = %s\n' % self.opt_dict['verbose'])
         f.write(u'\n')
         f.write(u'fifo_file = %s\n' % self.opt_dict['fifo_file'])
         f.write(u'lirc_id = %s\n' % self.opt_dict['lirc_id'])
-        f.write(u'\n')
-        f.write(u'# radio_cardtype can be any of four values \n')
-        f.write(u'# 0 = ivtv (with /dev/video24 as radio-out)\n')
-        f.write(u'# 1 = with corresponding alsa device as radio-out\n')
-        f.write(u'# 2 = cabled to the audiocard set in audio_card\n')
-        f.write(u'#     You also have to set "source_switch" and "source"\n')
-        f.write(u'#     to the source select mixer and its value\n')
-        f.write(u'# -1 = No radiocard\n')
-        f.write(u'# All but the audiocard for type 2 will be autodetected\n')
-        f.write(u'# It will default to the first detected ivtv-card or else any other.\n')
-        f.write(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'])
-        f.write(u'radio_device = %s\n' % self.opt_dict['radio_device'])
-        f.write(u'radio_out = %s\n' % self.opt_dict['radio_out'])
-        f.write(u'video_device = %s\n' % self.opt_dict['video_device'])
-        f.write(u'myth_backend = %s\n' % self.opt_dict['myth_backend'])
-        f.write(u'audio_card = %s\n' % self.opt_dict['audio_card'])
-        f.write(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'])
-        f.write(u'source_switch = %s\n' % self.opt_dict['source_switch'])
-        f.write(u'source = %s\n' % self.opt_dict['source'])
-        #~ f.write(u'source_mixer = %s\n' % self.opt_dict['source_mixer'])
-        #f.write(u' = %s\n' % self.opt_dict[''])
-        f.write(u'\n')
-
-        f.write(u'# These are the channels to use. You can disable a channel by placing\n')
-        f.write(u'# a \'#\' in front. You can change the names to suit your own preferences.\n')
-        f.write(u'# Place them in the order you want them numbered.\n')
-        f.write(u'\n')
-        f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[2])
-
-        if add_channels != True:
-            # just copy over the channels section
-            fo = self.open_file(self.args.config_file + '.old')
-            if fo == None or not self.check_encoding(fo):
-                # We cannot read the old config, so we create a new one
-                log.log('Error Opening the old config. Trying for an old radioFrequencies file.\n')
-                x = self.read_radioFrequencies_File()
-                if x == False:
-                    log.log('Error Opening an old radioFrequencies file. Creating a new Channellist.\n')
-
-                add_channels = True
-
-            else:
-                add_channels = False
-
-            if add_channels != True:
-                fo.seek(0,0)
-                type = 0
-                if add_channels == None:
-                    # it's an old type config without sections
-                    type = 2
-
-                for byteline in fo.readlines():
-                    line = self.get_line(fo, byteline, None)
-                    try:
-                        if line == '# encoding: utf-8' or line == False:
-                            continue
-
-                        # Look for section headers
-                        config_title = re.search('\[(.*?)\]', line)
-                        if config_title != None and (config_title.group(1) in self.__CONFIG_SECTIONS__.values()):
-                            for i, v in self.__CONFIG_SECTIONS__.items():
-                                if v == config_title.group(1):
-                                    type = i
-                                    continue
-                            continue
-
-                        if type > 1:
-                            # We just copy everything except the old configuration (type = 1)
-                            f.write(line + u'\n')
-                    except:
-                        log.log('Error reading old config\n')
-                        continue
-
-                fo.close()
-                f.close()
-                return True
-
-        if add_channels:
-            self.freq_list = rfcalls().detect_channels(config.opt_dict['radio_device'])
-            ch_num = 0
-            for c in rfconf.channels.itervalues():
-                ch_num += 1
-                if c['frequency'] in self.freq_list:
-                    f.write(u'%s = %s\n' % (c['frequency'], c['title']))
-                    self.freq_list.remove(c['frequency'])
-
-                else:
-                    for i in (0.1, -0.1, 0.2, -0.2):
-                        if c['frequency'] + i in self.freq_list:
-                            f.write(u'%s = %s\n' % (c['frequency'] + i, c['title']))
-                            self.freq_list.remove(c['frequency'] + i)
-                            break
-
-                    else:
-                        f.write(u'# Not detected frequency: %s = %s\n' % (c['frequency'], c['title']))
-
-            for freq in self.freq_list:
-                ch_num += 1
-                f.write(u'%s = Channel %s\n' % (freq, ch_num))
+        f.write(u'# Turning "case_sensitive" off will convert all commands comming through\n')
+        f.write(u'# the pipe and all internal commands to lowercase\n')
+        f.write(u'case_sensitive = %s\n' % self.opt_dict['case_sensitive'])
+         #f.write(u' = %s\n' % self.opt_dict[''])
+        for p in range(self.plugin_count):
+            self.pi_conf[p].write_opts_to_config(f)
 
         f.write(u'\n')
         f.write(u'# These are the commands to listen to. You have to put them in your\n')
@@ -1400,13 +1138,19 @@ class Configure:
         f.write(u'# Suspend\n')
         f.write(u'\n')
         f.write(u'# Available internal commands are: PowerOff, Reboot, Hibernate, Suspend\n')
-        f.write(u'#   PlayRadio, StopRadio, ToggleStartStop, ChannelUp, ChannelDown, \n')
-        f.write(u'#   VolumeUp, VolumeDown, Mute, CreateMythfmMenu \n')
-        f.write(u'# The first four are handled in the bash script: `~/.ivtv/Commands.sh`\n')
+        f.write(u'# These are handled in the bash script: `~/.ivtv/Commands.sh`\n')
         f.write(u'# You can also move that script for global access to `/usr/bin`\n')
         f.write(u'# Numerical commands you can not set here, they are always translated to\n')
-        f.write(u'# a channelchange.\n')
+        f.write(u'# a channelchange in the radioFunctions plugin.\n')
+        f.write(u'# If you have "case_sensitive" turned off all commands comming through\n')
+        f.write(u'# the pipe and all internal commands will convert to lowercase\n')
+        f.write(u'# So will any you put here\n')
+        f.write(u'# Of course any COMMAND or BASH command as described below stays case-sensitive!\n')
         f.write(u'\n')
+        for p in range(self.plugin_count):
+            if len(self.pi_conf[p].functioncalls) > 0:
+                self.pi_conf[p].add_command_help(f)
+
         f.write(u'# You can add command sequences to `~/.ivtv/Commands.sh`. You then\n')
         f.write(u'# precede the command with COMMAND: \n')
         f.write(u'# <lirc/fifo-command> = COMMAND:<~/.ivtv/Commands.sh-command>\n')
@@ -1424,9 +1168,9 @@ class Configure:
         f.write(u'# You can link a command to multiple lirc/fifo commands\n')
         f.write(u'# If you use a lirc/fifo commands more then ones the last is used\n')
         f.write(u'# If one is internal and an other external, the last internal is used\n')
-        f.write(u'# \n')
-        f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[3])
-        for c, command in rfconf.functioncalls.items():
+        f.write(u'\n')
+        f.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[-1][2])
+        for c, command in self.function_commands.items():
             f.write(u'%s = %s\n' % (c, command))
 
         for c, command in self.bash_commands.items():
@@ -1442,7 +1186,14 @@ class Configure:
                     line = u'%s %s' % (line, cc)
 
             line = re.sub('\n', '', line)
+            line = u'%s\n' % line
             f.write(line)
+
+        f.write(u'\n')
+
+        for p in range(self.plugin_count):
+            for s in self.pi_conf[p].__CONFIG_SECTIONS__.keys():
+                self.pi_conf[p].write_config_section(f, s, copy_old)
 
         f.close()
         return True
@@ -1451,19 +1202,43 @@ class Configure:
 
     def close(self):
         # close everything neatly
+        for p in range(self.plugin_count):
+            if len(self.pi_conf[p].functioncalls) > 0:
+                self.pi_conf[p].close()
+
         if self.ircat_pid != None:
             self.ircat_pid.kill()
 
+        if self.fifo_write != None:
+            self.fifo_write.write('quit\n')
+            self.fifo_write.close()
+            self.fifo_write = None
+
         if self.fifo_read != None:
             self.fifo_read.close()
-
-        if self.fifo_write != None:
-             self.fifo_write.close()
+            self.fifo_read = None
 
         if os.access(self.opt_dict['fifo_file'], os.F_OK):
             os.remove(self.opt_dict['fifo_file'])
 
-        rfconf.close()
+        if log.stderr_write != None:
+            for p in range(config.plugin_count):
+                config.pi_conf[p].stderr_write = None
+
+            log.stderr_write.write('quit\n')
+            log.stderr_write.close()
+            log.stderr_write = None
+
+        log.stderr_listner.join()
+
+        if log.stderr_read != None:
+                log.stderr_read.close()
+                log.stderr_read = None
+
+        if os.access(log.stderr_fifo, os.F_OK):
+            os.remove(log.stderr_fifo)
+        log.stderr_listner = None
+        log.log_queue.put('quit')
 
     # end close()
 
@@ -1499,8 +1274,11 @@ class Listen_To(Thread):
                     byteline += byte
                     continue
 
-                elif byteline.strip().lower() == 'start':
-                    log.log('Starting FiFo Listener on %s\n'% config.opt_dict['fifo_file'], 1)
+                if not config.opt_dict['case_sensitive']:
+                    byteline = byteline.lower()
+
+                if byteline.strip().lower() == 'start':
+                    log.log('Starting Command Listener on %s\n'% config.opt_dict['fifo_file'], 1)
                     byteline = ''
                     continue
 
@@ -1513,18 +1291,40 @@ class Listen_To(Thread):
                     rfcalls().select_channel(int(re.match('([0-9]+?)', byteline.strip()).group(0)))
                     byteline = ''
 
-                elif byteline.strip() in rfconf.functioncalls.keys():
+                elif byteline.strip() in config.function_commands.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    if rfconf.functioncalls[byteline.strip()] == 'CreateMythfmMenu':
-                        rfcalls().rf_function_call('CreateMythfmMenu', [config.ivtv_dir, config.opt_dict['fifo_file']])
+                    pi_cmd = config.function_commands['function']
+                    if config.function_commands['plugin'] == -1:
+                        if pi_cmd == 'PowerOff'and config.command_name != None:
+                            log.log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
+                            call([config.command_name,'poweroff'])
 
-                    else:
-                        rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
+                        elif pi_cmd == 'Reboot'and config.command_name != None:
+                            log.log('Executing %s %s' % (config.command_name, 'reboot'), 32)
+                            call([config.command_name,'reboot'])
+
+                        elif pi_cmd == 'Hibernate'and config.command_name != None:
+                            log.log('Executing %s %s' % (config.command_name, 'hibernate'), 32)
+                            for p in range(config.plugin_count):
+                                config.pi_func[p]().rf_function_call(pi_cmd)
+
+                            call([config.command_name,'hibernate'])
+
+                        elif pi_cmd == 'Suspend'and config.command_name != None:
+                            log.log('Executing %s %s' % (config.command_name, 'suspend'), 32)
+                            for p in range(config.plugin_count):
+                                config.pi_func[p]().rf_function_call(pi_cmd)
+
+                            call([config.command_name,'suspend'])
+
+                    elif config.function_commands['plugin'] in range(config.plugin_count):
+                        config.pi_func[config.function_commands['plugin']]().rf_function_call(pi_cmd)
+
                     byteline = ''
 
                 elif byteline.strip() in config.bash_commands.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    rfcalls().rf_function_call('Command', rfconf.functioncalls[byteline.strip()])
+                    call([config.command_name,config.bash_commands[byteline.strip()]])
                     byteline = ''
 
                 elif byteline.strip() in config.external_commands.keys():
@@ -1561,14 +1361,13 @@ def main():
         if x != None:
             return(x)
 
-        log.log( 'Starting Lirc Listener on %s\n'% config.opt_dict['lirc_id'], 0)
-        log.log( 'To QUIT: echo "quit" to %s\n'% config.opt_dict['fifo_file'], 0, 1)
-        #~ print rfconf.channels
+        log.log( 'Starting Lirc Listener on lircID: %s\n'% config.opt_dict['lirc_id'])
         config.open_fifo_filehandles()
         config.start_ircat()
 
         listener = Listen_To(config.fifo_read)
         listener.start()
+        log.log( 'To QUIT: echo "quit" to %s\n'% config.opt_dict['fifo_file'])
 
         listener.join()
         log.log( 'Closing down\n',1)

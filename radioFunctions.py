@@ -29,6 +29,11 @@ class FunctionConfig:
         self.log_queue = None
         self.stderr_write = None
 
+        self.__CONFIG_SECTIONS__ = { 1: u'Radio Channels'}
+        self.__BOOL_VARS__ = []
+        self.__INT_VARS__ = ['radio_cardtype']
+        self.__STR_VARS__ = ['audio_card', 'audio_mixer']
+        self.__NONE_STR_VARS__ = ['radio_device', 'radio_out', 'video_device', 'myth_backend','source_switch' , 'source','source_mixer']
         self.functioncalls = {u'play_radio'              :u'PlayRadio',
                                          u'stop_radio'              :u'StopRadio',
                                          u'start_stop_radio'  :u'ToggleStartStop',
@@ -38,9 +43,15 @@ class FunctionConfig:
                                          u'v-'                              :u'VolumeDown',
                                          u'mute'                          :u'Mute',
                                          u'create_mythfmmenu':u'CreateMythfmMenu'}
-        self.call_list = []
-        for v in self.functioncalls.values():
-            self.call_list.append(v)
+        self.opt_dict = {}
+
+        self.myth_menu_file = 'fmmenu.xml'
+        self.active_channel = 1
+        self.new_channel = 0
+        self.radio_pid = None
+        self.play_pcm = None
+        self.mixer = None
+        self.audio_out = None
 
         self.mutetext = {}
         self.mutetext[0] = 'Unmuting'
@@ -48,7 +59,6 @@ class FunctionConfig:
 
         self.channels = {}
         self.frequencies = {}
-        self.opt_dict = {}
 
         self.disable_alsa = False
         self.disable_radio = False
@@ -71,13 +81,6 @@ class FunctionConfig:
         self.alsa_names = {}
         self.get_alsa()
 
-        self.active_channel = 1
-        self.new_channel = 0
-        self.radio_pid = None
-        self.play_pcm = None
-        self.mixer = None
-        self.audio_out = None
-
     # end Init()
 
     def version(self, as_string = False):
@@ -91,6 +94,519 @@ class FunctionConfig:
             return (self.name, self.major, self.minor, self.patch, self.beta)
 
     # end version()
+
+    def init_plugin(self, ivtv_dir, plugin_list):
+        self.ivtv_dir = ivtv_dir
+
+        # Initialising radio and audio
+        self.dev_types = {}
+        self.dev_types[0] = 'ivtv radio device'
+        self.dev_types[1] = 'radio with alsa device'
+        self.dev_types[2] = 'radio cabled to an audio card'
+        self.opt_dict['myth_backend'] = None
+        self.opt_dict['radio_cardtype'] = -1
+        self.opt_dict['radio_device']  = None
+        self.opt_dict['radio_out'] = None
+        self.opt_dict['source_switch'] = None
+        self.opt_dict['source'] = None
+        self.opt_dict['source_mixer'] = None
+
+        self.check_dependencies()
+        # Detecting radio and audio defaults
+        self.select_card = u'You have to set audio-card to where the tv-card is cabled to: ['
+        if self.disable_alsa:
+            self.select_card = self.select_card + u']'
+
+        else:
+            for a in alsaaudio.cards():
+                self.select_card += u'%s, ' % a
+
+            self.select_card = self.select_card[0: -2] + u']'
+
+        self.detect_radiodevice()
+        if len(self.radio_devs) > 0:
+            for card in self.radio_devs:
+                if card['radio_cardtype'] == 0:
+                    # There is a ivtv-radiocard
+                    self.opt_dict['radio_cardtype'] = card['radio_cardtype']
+                    self.opt_dict['radio_device']  = card['radio_device']
+                    self.opt_dict['radio_out'] = card['radio_out']
+                    self.opt_dict['video_device'] =card['video_device']
+
+            else:
+                #We take the first
+                self.opt_dict['radio_cardtype'] = self.radio_devs[0]['radio_cardtype']
+                self.opt_dict['radio_device']  = self.radio_devs[0]['radio_device']
+                self.opt_dict['radio_out'] = self.radio_devs[0]['radio_out']
+                self.opt_dict['video_device'] =self.radio_devs[0]['video_device']
+
+        self.opt_dict['audio_card'] = alsaaudio.cards()[0]
+        for m in ('Front', 'Master', 'PCM'):
+            if m in alsaaudio.mixers(0):
+                self.opt_dict['audio_mixer'] = m
+                break
+
+        else:
+            self.opt_dict['audio_mixer'] = alsaaudio.mixers(0)[0]
+
+    # end init_plugin()
+
+    def init_parser(self, parser):
+
+        parser.add_argument('--card-type', type = str, default = None, dest = 'radio_cardtype',
+                        metavar = '<device>',
+                        help = 'type of radio-device/ (%s)\n' % self.opt_dict['radio_cardtype'] +
+                                    '   0 = ivtv (with /dev/video24 radio-out)\n' +
+                                    '   1 = with corresponding alsa device\n' +
+                                    '   2 = cabled to an audiocard\n' +
+                                    '  -1 = No radiocard' )
+
+        parser.add_argument('--radio-device', type = str, default = None, dest = 'radio_device',
+                        metavar = '<device>',
+                        help = 'name of the radio-device in /dev/ (%s)\n' % self.opt_dict['radio_device'] )
+
+        parser.add_argument('--radio-out', type = str, default = None, dest = 'radio_out',
+                        metavar = '<device>',
+                        help = 'name of the audio-out-device in /dev/ or\n' +
+                                    'the alsa device (%s)' % self.opt_dict['radio_out'])
+
+        parser.add_argument('--video-device', type = str, default = None, dest = 'video_device',
+                        metavar = '<device>',
+                        help = 'name of the corresponding video-device in /dev/\n(%s)' % self.opt_dict['video_device'] )
+
+        parser.add_argument('--myth-backend', type = str, default = None, dest = 'myth_backend',
+                        metavar = '<hostname>',
+                        help = 'backend dns hostname. (%s)\nSet to \'None\' string to disable checking.' % self.opt_dict['myth_backend'])
+
+        parser.add_argument('--audio-card', type = str, default = None, dest = 'audio_card',
+                        metavar = '<cardname>',
+                        help = 'The audiocard name to play the radio. (%s)\n' % self.opt_dict['audio_card'])
+
+        parser.add_argument('--audio-mixer', type = str, default = None, dest = 'audio_mixer',
+                        metavar = '<mixername>',
+                        help = 'The mixer name. (%s)\n' % self.opt_dict['audio_mixer'])
+
+        parser.add_argument('--list-alsa-cards', action = 'store_true', default = False, dest = 'list_alsa',
+                        help = 'Give a list of the alsa-audio cards on this system')
+
+        parser.add_argument('--list-mixers', action = 'store_true', default = False, dest = 'list_mixers',
+                        help = 'Give a list of the available mixer-controls for the given card')
+
+        if self.alsa_version == '0.8':
+            parser.add_argument('--list-pcms', action = 'store_true', default = False, dest = 'list_pcms',
+                            help = "Give a list of the available PCM's")
+
+        parser.add_argument('--create-menu', action = 'store_true', default = False, dest = 'create_menu',
+                        help = 'create a Radiomenu file %s in %s\n' % (self.myth_menu_file, self.ivtv_dir) +
+                                    'with the defined channels to be used in MythTV.')
+
+        return parser
+
+    # end init_parser()
+
+    def commandline_queries(self, args, opt_dict):
+
+        if args.list_alsa:
+            print 'The available alsa audio-cards are:'
+            for c in alsaaudio.cards():
+                print '    %s' % c
+
+            return(0)
+
+        if args.list_mixers:
+            if args.audio_card != None and args.audio_card in alsaaudio.cards():
+                self.opt_dict['audio_card'] = args.audio_card
+
+            cardid = RadioFunctions().get_cardid(self.opt_dict['audio_card'])
+            print 'The available mixer controls for audio-card: %s are:' % self.opt_dict['audio_card']
+            for m in alsaaudio.mixers(cardid):
+                print '    %s' % m
+
+            return(0)
+
+        if args.list_pcms:
+            print "The available playback PCM's are:"
+            for m in alsaaudio.pcms(alsaaudio.PCM_PLAYBACK):
+                print '    %s' % m
+
+            print "The available capture PCM's are:"
+            for m in alsaaudio.pcms(alsaaudio.PCM_CAPTURE):
+                print '    %s' % m
+
+            return(0)
+
+        if args.create_menu:
+            self.opt_dict['fifo_file'] = opt_dict['fifo_file']
+
+            RadioFunctions().create_fm_menu_file()
+            return(0)
+
+    # end commandline_queries()
+
+    def validate_config_line(self, type, line):
+        # Read the channel stuff
+        if type == 1:
+            try:
+                # Strip the name from the frequency
+                a = line.split('=',1)
+                if len(a) != 2:
+                    log('Ignoring incomplete Channel line in config file %s: %r\n' % (file, line))
+                    return
+
+                ch_num += 1
+                self.frequencies[float(a[0].strip())] = ch_num
+                self.channels[ch_num] = {}
+                self.channels[ch_num]['frequency'] = float(a[0].strip())
+                self.channels[ch_num]['title'] = unicode(a[1].strip())
+                if self.channels[ch_num]['title'] == '':
+                    self.channels[ch_num]['title'] = u'Frequency %s' % a[0].strip()
+
+            except Exception:
+                log('Invalid Channel line in config file %s: %r\n' % (file, line))
+
+
+    # validate_config_line()
+
+    def validate_options(self, args):
+
+        def is_video_device(path):
+            if path == None or path.lower() == 'none':
+                return None
+
+            if (not os.access(path, os.F_OK and os.R_OK)):
+                return False
+
+            if ((os.major(os.stat(path).st_rdev)) != 81):
+                return False
+
+            return path
+
+        if args.myth_backend != None:
+            self.opt_dict['myth_backend'] = args.myth_backend
+
+        if self.opt_dict['myth_backend'] == None:
+            if RadioFunctions().query_backend(socket.gethostname()) != -2:
+                self.opt_dict['myth_backend'] = socket.gethostname()
+
+        elif self.opt_dict['myth_backend'].lower().strip() == 'none':
+            self.opt_dict['myth_backend'] = None
+
+        if self.opt_dict['myth_backend'] != None and RadioFunctions().query_backend(self.opt_dict['myth_backend']) == -2:
+            log.log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
+            log.log('Run with --myth-backend None to disable checking!\n', 0)
+
+        if args.radio_cardtype != None:
+            self.opt_dict['radio_cardtype'] = args.radio_cardtype
+
+        if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
+            if args.radio_device != None:
+                x = is_video_device(args.radio_device)
+                if x != False:
+                    self.opt_dict['radio_device'] = x
+
+            x = is_video_device(self.opt_dict['radio_device'])
+            if x == False:
+                log.log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                self.opt_dict['radio_cardtype'] = None
+                self.opt_dict['radio_device'] = None
+                self.opt_dict['video_device'] = None
+                self.opt_dict['radio_out'] = None
+
+            else:
+                self.opt_dict['radio_device'] = x
+                udevpath =  RadioFunctions().query_udev_path( self.opt_dict['radio_device'], 'video4linux')
+                autodetect_card = None
+                for card in self.radio_devs:
+                    if card['udevpath'] == udevpath:
+                        autodetect_card = card
+                        self.opt_dict['radio_cardtype'] = card['radio_cardtype']
+                        break
+
+                else:
+                    log.log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                    self.opt_dict['radio_cardtype'] = None
+                    self.opt_dict['radio_device'] = None
+                    self.opt_dict['video_device'] = None
+                    self.opt_dict['radio_out'] = None
+
+        else:
+            self.opt_dict['radio_cardtype'] = None
+            self.opt_dict['radio_device'] = None
+            self.opt_dict['video_device'] = None
+            self.opt_dict['radio_out'] = None
+
+        if self.opt_dict['radio_cardtype'] != None:
+            if args.video_device != None:
+                self.opt_dict['video_device'] = args.video_device
+
+            udevpath =  RadioFunctions().query_udev_path( self.opt_dict['video_device'], 'video4linux')
+            if autodetect_card['udevpath'] != udevpath:
+                log.log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
+                self.opt_dict['video_device'] = autodetect_card['video_device']
+
+            if args.radio_out != None:
+                self.opt_dict['radio_out'] = args.radio_out
+
+            if self.opt_dict['radio_cardtype'] == 0:
+                udevpath =  RadioFunctions().query_udev_path( self.opt_dict['radio_out'], 'video4linux')
+                if autodetect_card['udevpath'] != udevpath:
+                    log.log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    self.opt_dict['radio_out'] = autodetect_card['radio_out']
+
+            elif self.opt_dict['radio_cardtype'] == 1:
+                if autodetect_card['radio_out'] != self.opt_dict['radio_out']:
+                    log.log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    self.opt_dict['radio_out'] = autodetect_card['radio_out']
+
+            elif self.opt_dict['radio_cardtype'] == 2 and self.opt_dict['radio_out'] == self.select_card:
+                log.log(self.select_card)
+
+        else:
+            self.opt_dict['radio_cardtype'] = -1
+            self.opt_dict['radio_device']  = None
+            self.opt_dict['radio_out'] = None
+            self.opt_dict['video_device'] = None
+
+        if args.audio_card != None:
+            if args.audio_card in RadioFunctions().get_alsa_cards():
+                self.opt_dict['audio_card'] = args.audio_card
+
+            else:
+                log.log('%s is not a recognized audiocard\n' % args.audio_card, 1)
+
+        if not self.opt_dict['audio_card'] in RadioFunctions().get_alsa_cards():
+            log.log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
+            self.opt_dict['audio_card'] = RadioFunctions().get_alsa_cards(0)
+
+        cardid = RadioFunctions().get_cardid(self.opt_dict['audio_card'])
+
+        if args.audio_mixer != None:
+            if args.audio_mixer in RadioFunctions().get_alsa_mixers(cardid):
+                self.opt_dict['audio_mixer'] = args.audio_mixer
+
+            else:
+                log.log('%s is not a recognized audiomixer]n' % args.audio_mixer, 1)
+
+        if not self.opt_dict['audio_mixer'] in RadioFunctions().get_alsa_mixers(cardid):
+            log.log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
+            self.opt_dict['audio_card'] = RadioFunctions().get_alsa_mixers(cardid, 0)
+
+    # end validate_options()
+
+    def final_validation(self):
+
+        if len(self.channels) == 0:
+            # There are no channels so looking for an old ~\.ivtv\radioFrequencies file
+            if self.read_radioFrequencies_File():
+                return
+
+            # We scan for frequencies
+            self.freq_list = RadioFunctions().detect_channels(config.opt_dict['radio_device'])
+            if len(self.freq_list) == 0:
+                return False
+
+            else:
+                ch_num = 0
+                for freq in self.freq_list:
+                    ch_num += 1
+                    self.frequencies[freq] = ch_num
+                    self.channels[ch_num] = {}
+                    self.channels[ch_num]['frequency'] = freq
+                    self.channels[ch_num]['title'] = 'Channel %s' % ch_num
+
+    # final_validation()
+
+    def write_opts_to_log(self):
+        """
+        Save the the used options to the logfile
+        """
+        log(u'',1, 2)
+        log(u'Starting radioFunctions',1, 2)
+        log(u'The Netherlands (%s)' % self.version(True), 1, 2)
+        log(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'], 1, 2)
+        log(u'radio_device = %s\n' % self.opt_dict['radio_device'], 1, 2)
+        log(u'radio_out = %s\n' % self.opt_dict['radio_out'], 1, 2)
+        log(u'video_device = %s\n' % self.opt_dict['video_device'], 1, 2)
+        log(u'myth_backend = %s\n' % self.opt_dict['myth_backend'], 1, 2)
+        log(u'audio_card = %s\n' % self.opt_dict['audio_card'], 1, 2)
+        log(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'], 1, 2)
+        log(u'source_switch = %s\n' % self.opt_dict['source_switch'], 1, 2)
+        log(u'source = %s\n' % self.opt_dict['source'], 1, 2)
+        #~ log(u'source_mixer = %s\n' % self.opt_dict['source_mixer'], 1, 2)
+        log(u'',1, 2)
+
+    # end write_opts_to_log()
+
+    def write_opts_to_config(self, config_file):
+
+        config_file.write(u'\n')
+        config_file.write(u'# The Options for the radioFunctions Plugin\n')
+        config_file.write(u'# radio_cardtype can be any of four values \n')
+        config_file.write(u'# 0 = ivtv (with /dev/video24 as radio-out)\n')
+        config_file.write(u'# 1 = with corresponding alsa device as radio-out\n')
+        config_file.write(u'# 2 = cabled to the audiocard set in audio_card\n')
+        config_file.write(u'#     You also have to set "source_switch" and "source"\n')
+        config_file.write(u'#     to the source select mixer and its value\n')
+        config_file.write(u'# -1 = No radiocard\n')
+        config_file.write(u'# All but the audiocard for type 2 will be autodetected\n')
+        config_file.write(u'# It will default to the first detected ivtv-card or else any other.\n')
+        config_file.write(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'])
+        config_file.write(u'radio_device = %s\n' % self.opt_dict['radio_device'])
+        config_file.write(u'radio_out = %s\n' % self.opt_dict['radio_out'])
+        config_file.write(u'video_device = %s\n' % self.opt_dict['video_device'])
+        config_file.write(u'myth_backend = %s\n' % self.opt_dict['myth_backend'])
+        config_file.write(u'audio_card = %s\n' % self.opt_dict['audio_card'])
+        config_file.write(u'audio_mixer = %s\n' % self.opt_dict['audio_mixer'])
+        config_file.write(u'source_switch = %s\n' % self.opt_dict['source_switch'])
+        config_file.write(u'source = %s\n' % self.opt_dict['source'])
+        #~ config_file.write(u'source_mixer = %s\n' % self.opt_dict['source_mixer'])
+        #config_file.write(u' = %s\n' % self.opt_dict[''])
+        config_file.write(u'\n')
+
+    # end write_opts_to_config()
+
+    def write_config_section(self, config_file, sectionid, copy_old):
+        if not sectionid in self.__CONFIG_SECTIONS__.keys():
+            return
+
+        if sectionid == 1:
+            config_file.write(u'# These are the channels to use. You can disable a channel by placing\n')
+            config_file.write(u'# a \'#\' in front. You can change the names to suit your own preferences.\n')
+            config_file.write(u'# Place them in the order you want them numbered.\n')
+            config_file.write(u'\n')
+            config_file.write(u'[%s]\n' % self.__CONFIG_SECTIONS__[sectionid])
+
+            if copy_old != False:
+                # just copy over the channels section
+                fo = io.open(self.args.config_file + '.old', 'rb')
+                if fo == None or not self.check_encoding(fo):
+                    # We cannot read the old config, so we create a new one
+                    log('Error Opening the old config. Trying for an old radioFrequencies file.\n')
+                    x = self.read_radioFrequencies_File()
+                    if x == False:
+                        log('Error Opening an old radioFrequencies file. Creating a new Channellist.\n')
+
+                    copy_old = False
+
+                else:
+                    copy_old = True
+
+                if copy_old != False:
+                    fo.seek(0,0)
+                    type = 0
+                    if copy_old == None:
+                        # it's an old type config without sections
+                        type = 1
+
+                    for byteline in fo.readlines():
+                        line = self.get_line(fo, byteline, None)
+                        try:
+                            if line == '# encoding: utf-8' or line == False:
+                                continue
+
+                            # Look for section headers
+                            config_title = re.search('\[(.*?)\]', line)
+                            if config_title != None and (config_title.group(1) in self.__CONFIG_SECTIONS__.values()):
+                                for i, v in self.__CONFIG_SECTIONS__.items():
+                                    if v == config_title.group(1):
+                                        type = i
+                                        continue
+                                continue
+
+                            if type > 1:
+                                # We just copy everything except the old configuration (type = 1)
+                                config_file.write(line + u'\n')
+                        except:
+                            log.log('Error reading old config\n')
+                            continue
+
+                    fo.close()
+                    f.close()
+                    return True
+
+            if copy_old:
+                self.freq_list = rfcalls().detect_channels(config.opt_dict['radio_device'])
+                ch_num = 0
+                for c in rfconf.channels.itervalues():
+                    ch_num += 1
+                    if c['frequency'] in self.freq_list:
+                        config_file.write(u'%s = %s\n' % (c['frequency'], c['title']))
+                        self.freq_list.remove(c['frequency'])
+
+                    else:
+                        for i in (0.1, -0.1, 0.2, -0.2):
+                            if c['frequency'] + i in self.freq_list:
+                                config_file.write(u'%s = %s\n' % (c['frequency'] + i, c['title']))
+                                self.freq_list.remove(c['frequency'] + i)
+                                break
+
+                        else:
+                            config_file.write(u'# Not detected frequency: %s = %s\n' % (c['frequency'], c['title']))
+
+                for freq in self.freq_list:
+                    ch_num += 1
+                    config_file.write(u'%s = Channel %s\n' % (freq, ch_num))
+
+
+    # end write_config_section()
+
+    def add_command_help(self, config_file):
+        config_file.write(u'# In the radioFunctions plugin available commands are:.\n')
+        config_file.write(u'#   PlayRadio, StopRadio, ToggleStartStop, ChannelUp, ChannelDown, \n')
+        config_file.write(u'#   VolumeUp, VolumeDown, Mute, CreateMythfmMenu \n')
+        config_file.write(u'\n')
+
+    # end add_command_help()
+
+    def read_radioFrequencies_File(self):
+        """Check for an old RadioFrequencies file."""
+
+        if not os.access(self.ivtv_dir +  '/radioFrequencies', os.F_OK and os.R_OK) :
+            return False
+
+        f = io.open(self.ivtv_dir +  '/radioFrequencies', 'rb')
+        if f == None:
+            return False
+
+        f.seek(0,0)
+        ch_num = 0
+        for byteline in f.readlines():
+            try:
+                line = byteline.decode('utf-8')
+                if len(line) == 0 or line[0:1] == '#':
+                    continue
+
+                # Read the channel stuff
+                try:
+                    # Strip the name from the frequency
+                    a = re.split(';',line)
+                    if len(a) != 2:
+                        continue
+
+                    ch_num += 1
+                    self.frequencies[float(a[1].strip())] = ch_num
+                    self.channels[ch_num] = {}
+                    self.channels[ch_num]['title'] = a[0].strip()
+                    self.channels[ch_num]['frequency'] = float(a[1].strip())
+                    if self.channels[ch_num]['title'] == '':
+                        self.channels[ch_num]['title'] = u'Frequency %s' % a[1].strip()
+
+                except Exception:
+                    log.log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
+                    continue
+
+            except Exception as e:
+                log.log(u'Error reading Config\n')
+                continue
+
+        f.close()
+
+        if len(self.channels) == 0:
+            return False
+
+        return True
+
+    # end read_radioFrequencies_File()
 
     def retrieve_value(self, name, default):
         # Retrieve old values
@@ -119,7 +635,7 @@ class FunctionConfig:
 
     # end save_value()
 
-    def check_dependencies(self, ivtv_dir):
+    def check_dependencies(self):
 
         def check_path(name, use_sudo = False):
             if use_sudo:
@@ -140,7 +656,6 @@ class FunctionConfig:
                     log('%s not Found!\n' % (name))
                     return None
 
-        self.ivtv_dir = ivtv_dir
         self.active_channel = int(self.retrieve_value('LastChannel', 1))
 
         self.udevadm = check_path("udevadm")
@@ -168,8 +683,8 @@ class FunctionConfig:
                 video_devs.append(f)
 
         audio_cards = {}
-        for id in range(len(rfcalls().get_alsa_cards())):
-            audio_cards[id] = rfcalls().query_udev_path(u'/dev/snd/controlC%s' % id, 'sound')
+        for id in range(len(alsaaudio.cards())):
+            audio_cards[id] = RadioFunctions().query_udev_path(u'/dev/snd/controlC%s' % id, 'sound')
 
         self.radio_devs = []
         for f in os.listdir('/dev/'):
@@ -177,7 +692,7 @@ class FunctionConfig:
                 devno = int(f[5:])
                 radio_card = {}
                 radio_card['radio_device'] = u'/dev/%s' % f
-                radio_card['udevpath'] = rfcalls().query_udev_path('/dev/%s' % f, 'video4linux')
+                radio_card['udevpath'] = RadioFunctions().query_udev_path('/dev/%s' % f, 'video4linux')
                 if 'video%s' % devno in video_devs:
                     radio_card['video_device'] = u'/dev/video%s' % devno
 
@@ -196,9 +711,9 @@ class FunctionConfig:
                     self.radio_devs.append(radio_card)
                     continue
 
-                for id in range(len(rfcalls().get_alsa_cards())):
+                for id in range(len(alsaaudio.cards())):
                     if audio_cards[id] == radio_card['udevpath']:
-                        radio_card['radio_out'] = rfcalls().get_alsa_cards(id)
+                        radio_card['radio_out'] = alsaaudio.cards()[id]
                         radio_card['radio_cardtype'] = 1
                         break
 
@@ -449,33 +964,15 @@ class RadioFunctions:
     All functions to manipulate the radio and others
     """
     def rf_function_call(self, rf_call_id, command = None):
-        if rf_call_id == 'Command'and config.command_name != None and command != None:
-            log('Executing %s %s' % (config.command_name, command), 32)
-            call([config.command_name, command])
-
-        elif rf_call_id == 'PowerOff'and config.command_name != None:
-            log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
-            call([config.command_name,'poweroff'])
-
-        elif rf_call_id == 'Reboot'and config.command_name != None:
-            log('Executing %s %s' % (config.command_name, 'reboot'), 32)
-            call([config.command_name,'reboot'])
-
-        elif rf_call_id == 'Hibernate'and config.command_name != None:
-            log('Executing %s %s' % (config.command_name, 'hibernate'), 32)
+        if rf_call_id == 'Hibernate':
             if config.play_pcm != None or config.radio_pid != None:
                 self.stop_radio()
                 time.sleep(1)
 
-            call([config.command_name,'hibernate'])
-
-        elif rf_call_id == 'Suspend'and config.command_name != None:
-            log('Executing %s %s' % (config.command_name, 'suspend'), 32)
+        elif rf_call_id == 'Suspend':
             if config.play_pcm != None or config.radio_pid != None:
                 self.stop_radio()
                 time.sleep(1)
-
-            call([config.command_name,'suspend'])
 
         elif rf_call_id == 'PlayRadio':
             self.start_radio()
@@ -506,7 +1003,7 @@ class RadioFunctions:
             self.toggle_radio_mute()
 
         elif rf_call_id == 'CreateMythfmMenu':
-            self.create_fm_menu_file(command[0], command[1])
+            self.create_fm_menu_file()
 
     # end rf_function_call ()
 
@@ -862,6 +1359,18 @@ class RadioFunctions:
 
     # end get_alsa_mixers()
 
+    def get_alsa_pcms(self, playback = True):
+        if config.disable_alsa:
+            return []
+
+        if playback:
+            return alsaaudio.pcms()
+
+        else:
+            return alsaaudio.pcms(alsaaudio.PCM_CAPTURE)
+
+    # end get_alsa_mixers()
+
     def get_cardid(self, audiocard = None):
         if config.disable_alsa:
             return -1
@@ -1011,12 +1520,12 @@ class RadioFunctions:
 
     # end toggle_radio_mute()
 
-    def create_fm_menu_file(self, ivtv_dir, fifo):
+    def create_fm_menu_file(self):
         log('Executing create_fm_menu_file', 32)
         #~ if len(config.channels) == 0:
             #~ return
 
-        file = '%s/fmmenu.xml' % ivtv_dir
+        file = '%s/fmmenu.xml' % config.ivtv_dir
         try:
             os.rename(file, file + '.old')
         except:
@@ -1032,14 +1541,14 @@ class RadioFunctions:
                 f.write(u'   <button>\n')
                 f.write(u'      <type>MUSIC</type>\n')
                 f.write(u'      <text>%s</text>\n' % (channel['title']))
-                f.write(u'      <action>EXEC echo "%s" > "%s"</action>\n' % (c, fifo))
+                f.write(u'      <action>EXEC echo "%s" > "%s"</action>\n' % (c, config.opt_dict['fifo_file']))
                 f.write(u'   </button>\n')
                 f.write(u'\n')
 
             f.write(u'   <button>\n')
             f.write(u'      <type>MUSIC</type>\n')
             f.write(u'      <text>Start/Stop de Radio</text>\n')
-            f.write(u'      <action>EXEC echo "start_stop_radio" > "%s"</action>\n' % (fifo))
+            f.write(u'      <action>EXEC echo "start_stop_radio" > "%s"</action>\n' % (config.opt_dict['fifo_file']))
             f.write(u'   </button>\n')
             f.write(u'\n')
             f.write(u'</mythmenu>\n')
