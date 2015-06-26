@@ -386,7 +386,7 @@ class Configure:
         """Read the configurationfile Return False on failure."""
 
         f = None
-        for file in (self.args.config_file, self.ivtv_dir + self.config_file, self.etc_dir + self.config_file):
+        for file in (self.args.config_file, self.ivtv_dir + self.config_file, self.etc_dir + self.config_file, ):
             if file == None or not os.access(file, os.F_OK) :
                 continue
 
@@ -401,13 +401,15 @@ class Configure:
             else:
                 log('configfile: %s is not readable!\n' % file, 1 )
 
-        if f == None:
+        if f == None or not self.check_encoding(f):
+            if os.access(self.ivtv_dir + 'radioFunctions.conf', os.F_OK) :
+                os.rename(self.ivtv_dir + 'radioFunctions.conf', self.ivtv_dir + self.config_file)
+                f = self.open_file(self.ivtv_dir + self.config_file)
+
+        if f == None or not self.check_encoding(f):
             x = self.read_radioFrequencies_File()
             if x == False:
                 log('Could not find an accessible configfile!\n', 1)
-
-            else:
-                self.write_config(True)
 
             return(x)
 
@@ -1299,9 +1301,10 @@ class Listen_To(Thread):
                     log('%s command received.' % byteline, 2)
                     return(0)
 
-                elif re.match('([0-9]+?)', byteline.strip()):
-                    log('%s command received.' % byteline, 2)
-                    rfcalls().select_channel(int(re.match('([0-9]+?)', byteline.strip()).group(0)))
+                elif re.match('([0-9]+)', byteline.strip()):
+                    chan = int(re.match('([0-9]+)', byteline.strip()).group(0))
+                    log('%s command received. Sending %s' % (byteline, chan), 2)
+                    rfcalls().select_channel(chan)
                     byteline = ''
                     continue
 
