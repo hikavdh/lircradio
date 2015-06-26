@@ -56,7 +56,7 @@ class Configure:
         self.name ='lircradio.py'
         self.major = 0
         self.minor = 2
-        self.patch = 0
+        self.patch = 1
         self.beta = True
 
         self.write_info_files = False
@@ -88,10 +88,11 @@ class Configure:
             os.mkdir(self.ivtv_dir)
 
         self.etc_dir = u'/etc/lircradio'
-        self.config_file =u'/radioFunctions.conf'
+        self.config_file =u'/lircradio.conf'
         self.log_file = u'%s/lircradio.log' % self.ivtv_dir
         self.myth_menu_file = 'fmmenu.xml'
         self.opt_dict['verbose'] = False
+        self.opt_dict['case_sensitive'] = False
 
         # Initialising fifo variables
         self.opt_dict['fifo_file'] = u'/tmp/%s-fiforadio' % self.username
@@ -99,8 +100,12 @@ class Configure:
         self.fifo_read = None
         self.fifo_write = None
         self.ircat_pid = None
-        self.bash_commands = {}
-        self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
+        self.functioncalls = {}
+        self.functioncalls_lower = {}
+        self.external_commands = {}
+        self.external_commands_lower = {}
+        self.shell_commands = {'test': ['echo', 'Testing the pipe\n']}
+        self.shell_commands_lower = {'test': ['echo', 'Testing the pipe\n']}
 
         # Initialising radio and audio
         self.dev_types = {}
@@ -294,6 +299,9 @@ class Configure:
         parser.add_argument('-q', '--quiet', action = 'store_false', default = None, dest = 'verbose',
                         help = 'suppress all output.')
 
+        parser.add_argument('-s', '--case-sensitive', action = 'store_true', default = None, dest = 'case_sensitive',
+                        help = 'Make all commands case sensitive.')
+
         #~ parser.add_argument('-d', '--daemon', action = 'store_true', default = None, dest = 'daemon',
                         #~ help = 'run as a daemon.')
 
@@ -434,7 +442,7 @@ class Configure:
                         # Strip the name from the value
                         a = line.split('=',1)
                         # Boolean values
-                        if a[0].lower().strip() in ('write_info_files', 'verbose', 'daemon'):
+                        if a[0].lower().strip() in ('write_info_files', 'verbose', 'case_sensitive', 'daemon'):
                             if len(a) == 1:
                                 self.opt_dict[a[0].lower().strip()] = True
 
@@ -497,22 +505,29 @@ class Configure:
                     try:
                         # Strip the lircname from the command
                         a = line.split('=',1)
-                        if(len(a) == 1) and (unicode(a[0].strip()) in rfconf.call_list):
-                            rfconf.functioncalls[unicode(a[0].strip())] = unicode(a[0].strip())
+                        lirc_cmd = unicode(a[0].strip())
+                        cmd_line = lirc_cmd
+                        if len(a) > 1:
+                            cmd_line = unicode(a[1].strip())
 
-                        elif (len(a) == 2) and (unicode(a[1].strip()) in rfconf.call_list):
-                            rfconf.functioncalls[unicode(a[0].strip())] = unicode(a[1].strip())
+                        if cmd_line.lower() in rfconf.call_list.keys():
+                            self.functioncalls[lirc_cmd] = rfconf.call_list[cmd_line.lower()]
+                            self.functioncalls_lower[lirc_cmd.lower()] = rfconf.call_list[cmd_line.lower()]
 
-                        elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
-                            self.external_commands[unicode(a[0].strip())] = []
+                        elif (len(a) > 1) and cmd_line.lower()[0:8] == 'command:':
+                            self.external_commands[lirc_cmd] =cmd_line[8:].strip()
+                            self.external_commands_lower[lirc_cmd.lower()] = self.external_commands[lirc_cmd]
+
+                        elif (len(a) > 1) and cmd_line.lower()[0:5] == 'bash:':
+                            self.shell_commands[lirc_cmd] = []
                             quote_cnt = 0
                             quote_cmd = ''
                             word_cmd = ''
-                            aa = unicode(a[1].strip())[5:].strip()
+                            aa = cmd_line[5:].strip()
                             for c in range(len(aa)):
                                 if quote_cnt == 1:
                                     if aa[c] == '"':
-                                        self.external_commands[unicode(a[0].strip())].append(quote_cmd)
+                                        self.shell_commands[lirc_cmd].append(quote_cmd)
                                         quote_cnt = 0
                                         quote_cmd = ''
                                         continue
@@ -531,10 +546,11 @@ class Configure:
                                         continue
 
                                 if word_cmd != '':
-                                    self.external_commands[unicode(a[0].strip())].append(word_cmd)
+                                    self.shell_commands[lirc_cmd].append(word_cmd)
                                     word_cmd = ''
-                        elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
-                            bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
+
+                            self.shell_commands_lower[lirc_cmd.lower()] = self.shell_commands[lirc_cmd]
+
                         else:
                             log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
 
@@ -683,6 +699,9 @@ class Configure:
             self.opt_dict['verbose'] = self.args.verbose
             rfconf.opt_dict['verbose'] = self.opt_dict['verbose']
 
+        if self.args.case_sensitive != None:
+            self.opt_dict['case_sensitive'] = self.args.case_sensitive
+
         # Opening the logfile
         if self.args.log_file != None:
             rfconf.log_output = self.open_file(self.args.log_file, mode = 'ab')
@@ -699,6 +718,13 @@ class Configure:
 
         if self.args.log_file != None and not os.access(self.args.log_file, os.W_OK):
             log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, self.log_file), 0)
+
+        if self.args.verbose != None:
+            self.opt_dict['verbose'] = self.args.verbose
+            rfconf.opt_dict['verbose'] = self.opt_dict['verbose']
+
+        if self.args.case_sensitive != None:
+            self.opt_dict['case_sensitive'] = self.args.case_sensitive
 
         if self.args.fifo_file != None:
             self.opt_dict['fifo_file'] = self.args.fifo_file
@@ -974,6 +1000,7 @@ class Configure:
         log(u'verbose = %s\n' % self.opt_dict['verbose'], 1, 2)
         log(u'fifo_file = %s\n' % self.opt_dict['fifo_file'], 1, 2)
         log(u'lirc_id = %s\n' % self.opt_dict['lirc_id'], 1, 2)
+        log(u'case_sensitive = %s\n' % self.opt_dict['case_sensitive'], 1, 2)
         log(u'radio_cardtype = %s\n' % self.opt_dict['radio_cardtype'], 1, 2)
         log(u'radio_device = %s\n' % self.opt_dict['radio_device'], 1, 2)
         log(u'radio_out = %s\n' % self.opt_dict['radio_out'], 1, 2)
@@ -1034,6 +1061,7 @@ class Configure:
         f.write(u'\n')
         f.write(u'fifo_file = %s\n' % self.opt_dict['fifo_file'])
         f.write(u'lirc_id = %s\n' % self.opt_dict['lirc_id'])
+        f.write(u'case_sensitive = %s\n' % self.opt_dict['case_sensitive'])
         f.write(u'\n')
         f.write(u'# radio_cardtype can be any of four values \n')
         f.write(u'# 0 = ivtv (with /dev/video24 as radio-out)\n')
@@ -1179,10 +1207,10 @@ class Configure:
         for c, command in rfconf.functioncalls.items():
             f.write(u'%s = %s\n' % (c, command))
 
-        for c, command in self.bash_commands.items():
+        for c, command in self.external_commands.items():
             f.write(u'%s = COMMAND:%s\n' % (c, command))
 
-        for c, command in self.external_commands.items():
+        for c, command in self.shell_commands.items():
             line = u'%s = BASH:' % c
             for cc in command:
                 if ' ' in cc:
@@ -1230,6 +1258,19 @@ class Listen_To(Thread):
         self.fifo = fifo
 
     def run(self):
+        if config.opt_dict['case_sensitive']:
+            for k, c in config.functioncalls.items():
+                if c in rfconf.call_list.values():
+                    internal_cmds[k] = c
+
+            external_cmds = config.external_commands
+            bash_cmds = config.shell_commands
+
+        else:
+            internal_cmds = config.functioncalls_lower
+            external_cmds = config.external_commands_lower
+            bash_cmds = config.shell_commands_lower
+
         byteline = ''
         try:
             while True:
@@ -1245,7 +1286,7 @@ class Listen_To(Thread):
                 if byte == None or (byte == '\n' and byteline == '') or (byte == ' ' and byteline == ''):
                     continue
 
-                elif byte != '\n':
+                elif byte != '\n' and  byte != ' ':
                     byteline += byte
                     continue
 
@@ -1262,24 +1303,28 @@ class Listen_To(Thread):
                     log('%s command received.' % byteline, 2)
                     rfcalls().select_channel(int(re.match('([0-9]+?)', byteline.strip()).group(0)))
                     byteline = ''
+                    continue
 
-                elif byteline.strip() in rfconf.functioncalls.keys():
-                    log('%s command received.' % byteline, 2)
-                    if rfconf.functioncalls[byteline.strip()] == 'CreateMythfmMenu':
+                if not config.opt_dict['case_sensitive']:
+                    byteline = byteline.strip().lower()
+
+                if byteline in internal_cmds.keys():
+                    log('%s command received. Sending %s' % (byteline, internal_cmds[byteline]), 2)
+                    if internal_cmds[byteline] == 'CreateMythfmMenu':
                         rfcalls().rf_function_call('CreateMythfmMenu', [config.ivtv_dir, config.opt_dict['fifo_file']])
 
                     else:
-                        rfcalls().rf_function_call(rfconf.functioncalls[byteline.strip()])
+                        rfcalls().rf_function_call(internal_cmds[byteline])
                     byteline = ''
 
-                elif byteline.strip() in config.bash_commands.keys():
+                elif byteline in external_cmds.keys():
                     log('%s command received.' % byteline, 2)
-                    rfcalls().rf_function_call('Command', rfconf.functioncalls[byteline.strip()])
+                    rfcalls().rf_function_call('Command', external_cmds[byteline])
                     byteline = ''
 
-                elif byteline.strip() in config.external_commands.keys():
+                elif byteline in bash_cmds.keys():
                     log('%s command received.' % byteline, 2)
-                    call(config.external_commands[byteline.strip()])
+                    call(bash_cmds[byteline])
                     byteline = ''
 
                 else:

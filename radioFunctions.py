@@ -23,7 +23,7 @@ class FunctionConfig:
         self.name = 'radioFunctions.py'
         self.major = 0
         self.minor = 2
-        self.patch = 0
+        self.patch = 1
         self.beta = True
 
         self.functioncalls = {u'poweroff'                  :u'PowerOff',
@@ -33,16 +33,16 @@ class FunctionConfig:
                                          u'play_radio'              :u'PlayRadio',
                                          u'stop_radio'              :u'StopRadio',
                                          u'start_stop_radio'  :u'ToggleStartStop',
-                                         u'ch+'                            :u'ChannelUp',
-                                         u'ch-'                            :u'ChannelDown',
-                                         u'v+'                              :u'VolumeUp',
-                                         u'v-'                              :u'VolumeDown',
+                                         u'Ch+'                            :u'ChannelUp',
+                                         u'Ch-'                            :u'ChannelDown',
+                                         u'V+'                              :u'VolumeUp',
+                                         u'V-'                              :u'VolumeDown',
                                          u'mute'                          :u'Mute',
                                          u'create_mythfmmenu':u'CreateMythfmMenu'}
                                          #~ u'':u'',
-        self.call_list = []
+        self.call_list = {}
         for v in self.functioncalls.values():
-            self.call_list.append(v)
+            self.call_list[v.lower()] = v
 
         self.mutetext = {}
         self.mutetext[0] = 'Unmuting'
