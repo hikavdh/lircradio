@@ -255,6 +255,7 @@ class Configure:
         if encoding == None:
             encoding = self.file_encoding
 
+        file.seek(0,0)
         for byteline in file.readlines():
             line = self.get_line(file, byteline, True)
             if not line:
@@ -388,11 +389,13 @@ class Configure:
         f = None
         for file in (self.args.config_file, self.ivtv_dir + self.config_file, self.etc_dir + self.config_file, ):
             if file == None or not os.access(file, os.F_OK) :
+                log('Error opening configfile: %s\n' % file, 1)
                 continue
 
             if os.access(file, os.R_OK):
                 f = self.open_file(file)
                 if f != None and self.check_encoding(f):
+                    self.args.config_file = file
                     break
 
                 else:
@@ -404,9 +407,11 @@ class Configure:
         if f == None or not self.check_encoding(f):
             if os.access(self.ivtv_dir + 'radioFunctions.conf', os.F_OK) :
                 os.rename(self.ivtv_dir + 'radioFunctions.conf', self.ivtv_dir + self.config_file)
-                f = self.open_file(self.ivtv_dir + self.config_file)
+                self.args.config_file = self.ivtv_dir + self.config_file
+                f = self.open_file(self.args.config_file)
 
         if f == None or not self.check_encoding(f):
+            self.args.config_file = None
             x = self.read_radioFrequencies_File()
             if x == False:
                 log('Could not find an accessible configfile!\n', 1)
@@ -875,20 +880,6 @@ class Configure:
 
     # end validate_commandline()
 
-    def validate_config(self):
-        if len(self.radio_devs) == 0:
-            print 'No radio devices found!\n'
-
-        elif len(self.radio_devs) == 1:
-            print 'Only one radio devices found of type %s!\n' % self.dev_types[self.radio_devs[0]['radio_cardtype']]
-
-        else:
-            print 'Select the radio device to use:\n'
-            for i in range(len(self.radio_devs)):
-                print
-
-    # end validate_config()
-
     def open_fifo_filehandles(self):
         # Checking out the fifo file
         try:
@@ -1272,6 +1263,9 @@ class Listen_To(Thread):
             internal_cmds = config.functioncalls_lower
             external_cmds = config.external_commands_lower
             bash_cmds = config.shell_commands_lower
+
+        #~ for k, c in internal_cmds.items():
+            #~ log('%s = %s' % (k, c))
 
         byteline = ''
         try:
