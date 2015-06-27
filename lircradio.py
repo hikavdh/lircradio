@@ -726,13 +726,6 @@ class Configure:
         if self.args.log_file != None and not os.access(self.args.log_file, os.W_OK):
             log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, self.log_file), 0)
 
-        if self.args.verbose != None:
-            self.opt_dict['verbose'] = self.args.verbose
-            rfconf.opt_dict['verbose'] = self.opt_dict['verbose']
-
-        if self.args.case_sensitive != None:
-            self.opt_dict['case_sensitive'] = self.args.case_sensitive
-
         if self.args.fifo_file != None:
             self.opt_dict['fifo_file'] = self.args.fifo_file
 
@@ -1251,6 +1244,7 @@ class Listen_To(Thread):
         self.fifo = fifo
 
     def run(self):
+        internal_cmds = {}
         if config.opt_dict['case_sensitive']:
             for k, c in config.functioncalls.items():
                 if c in rfconf.call_list.values():
