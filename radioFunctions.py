@@ -7,7 +7,7 @@ description_text = """
 
 import sys, io, os, datetime, time, random
 import re, codecs, locale, pwd
-import socket, urllib2, sys
+import socket, urllib2, sys, traceback
 from urllib2   import urlopen
 from stat import *
 from xml.etree import cElementTree as ET
@@ -264,7 +264,6 @@ class FunctionConfig:
             except Exception:
                 log('Invalid Channel line in config file %s: %r\n' % (file, line))
 
-
     # validate_config_line()
 
     def validate_options(self, args):
@@ -292,8 +291,8 @@ class FunctionConfig:
             self.opt_dict['myth_backend'] = None
 
         if self.opt_dict['myth_backend'] != None and RadioFunctions().query_backend(self.opt_dict['myth_backend']) == -2:
-            log.log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
-            log.log('Run with --myth-backend None to disable checking!\n', 0)
+            log('The MythTV backend %s is not responding!\n' % self.opt_dict['myth_backend'],1)
+            log('Run with --myth-backend None to disable checking!\n', 0)
 
         if args.radio_cardtype != None:
             self.opt_dict['radio_cardtype'] = args.radio_cardtype
@@ -306,7 +305,7 @@ class FunctionConfig:
 
             x = is_video_device(self.opt_dict['radio_device'])
             if x == False:
-                log.log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                log('%s is not readable or not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
                 self.opt_dict['radio_cardtype'] = None
                 self.opt_dict['radio_device'] = None
                 self.opt_dict['video_device'] = None
@@ -323,7 +322,7 @@ class FunctionConfig:
                         break
 
                 else:
-                    log.log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
+                    log('%s is not a valid radio device. Disabling radio\n' % self.opt_dict['radio_device'])
                     self.opt_dict['radio_cardtype'] = None
                     self.opt_dict['radio_device'] = None
                     self.opt_dict['video_device'] = None
@@ -341,7 +340,7 @@ class FunctionConfig:
 
             udevpath =  RadioFunctions().query_udev_path( self.opt_dict['video_device'], 'video4linux')
             if autodetect_card['udevpath'] != udevpath:
-                log.log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
+                log('%s is not the corresponding video device. Setting to %s\n' % (self.opt_dict['video_device'], autodetect_card['video_device']))
                 self.opt_dict['video_device'] = autodetect_card['video_device']
 
             if args.radio_out != None:
@@ -350,16 +349,16 @@ class FunctionConfig:
             if self.opt_dict['radio_cardtype'] == 0:
                 udevpath =  RadioFunctions().query_udev_path( self.opt_dict['radio_out'], 'video4linux')
                 if autodetect_card['udevpath'] != udevpath:
-                    log.log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    log('%s is not the corresponding radio-out device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
             elif self.opt_dict['radio_cardtype'] == 1:
                 if autodetect_card['radio_out'] != self.opt_dict['radio_out']:
-                    log.log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
+                    log('%s is not the corresponding alsa device. Setting to %s\n' % (self.opt_dict['radio_out'], autodetect_card['radio_out']))
                     self.opt_dict['radio_out'] = autodetect_card['radio_out']
 
             elif self.opt_dict['radio_cardtype'] == 2 and self.opt_dict['radio_out'] == self.select_card:
-                log.log(self.select_card)
+                log(self.select_card)
 
         else:
             self.opt_dict['radio_cardtype'] = -1
@@ -372,10 +371,10 @@ class FunctionConfig:
                 self.opt_dict['audio_card'] = args.audio_card
 
             else:
-                log.log('%s is not a recognized audiocard\n' % args.audio_card, 1)
+                log('%s is not a recognized audiocard\n' % args.audio_card, 1)
 
         if not self.opt_dict['audio_card'] in RadioFunctions().get_alsa_cards():
-            log.log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
+            log('%s is not a recognized audiocard\n' % self.opt_dict['audio_card'], 1)
             self.opt_dict['audio_card'] = RadioFunctions().get_alsa_cards(0)
 
         cardid = RadioFunctions().get_cardid(self.opt_dict['audio_card'])
@@ -385,10 +384,10 @@ class FunctionConfig:
                 self.opt_dict['audio_mixer'] = args.audio_mixer
 
             else:
-                log.log('%s is not a recognized audiomixer]n' % args.audio_mixer, 1)
+                log('%s is not a recognized audiomixer]n' % args.audio_mixer, 1)
 
         if not self.opt_dict['audio_mixer'] in RadioFunctions().get_alsa_mixers(cardid):
-            log.log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
+            log('%s is not a recognized audiomixer\n' % self.opt_dict['audio_mixer'], 1)
             self.opt_dict['audio_card'] = RadioFunctions().get_alsa_mixers(cardid, 0)
 
     # end validate_options()
@@ -517,7 +516,8 @@ class FunctionConfig:
                                 # We just copy everything except the old configuration (type = 1)
                                 config_file.write(line + u'\n')
                         except:
-                            log.log('Error reading old config\n')
+                            log('Error reading old config\n')
+                            log(traceback.format_exc())
                             continue
 
                     fo.close()
@@ -592,11 +592,12 @@ class FunctionConfig:
                         self.channels[ch_num]['title'] = u'Frequency %s' % a[1].strip()
 
                 except Exception:
-                    log.log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
+                    log('Invalid line in config file %s: %r\n' % (self.ivtv_dir +  '/radioFrequencies', line))
                     continue
 
             except Exception as e:
-                log.log(u'Error reading Config\n')
+                log(u'Error reading Config\n')
+                log(traceback.format_exc())
                 continue
 
         f.close()
@@ -749,6 +750,7 @@ class FunctionConfig:
                         mixer = alsaaudio.Mixer(control = name, id = mid, cardindex = cid)
 
                     except:
+                        #~ log(traceback.format_exc())
                         continue
 
                     self.alsa_cards[cid]['mixers'][name][mid] = {}
@@ -761,6 +763,7 @@ class FunctionConfig:
                             self.alsa_cards[cid]['mixers'][name][mid]['mute'] = x
 
                         except:
+                            #~ log(traceback.format_exc())
                             pass
 
                         try:
@@ -769,6 +772,7 @@ class FunctionConfig:
                             self.alsa_cards[cid]['mixers'][name][mid]['rec'] = x
 
                         except:
+                            #~ log(traceback.format_exc())
                             pass
 
                     if len(mixer.volumecap()) > 0:
@@ -782,6 +786,7 @@ class FunctionConfig:
                             self.alsa_cards[cid]['mixers'][name][mid]['volume'] = x
 
                         except:
+                            #~ log(traceback.format_exc())
                             pass
 
                         try:
@@ -794,6 +799,7 @@ class FunctionConfig:
                             self.alsa_cards[cid]['mixers'][name][mid]['capture'] = x
 
                         except:
+                            #~ log(traceback.format_exc())
                             pass
 
                     if len(mixer.getenum()) > 0:
@@ -949,7 +955,8 @@ class AudioPCM(Thread):
                         #~ time.sleep(.001)
 
         except:
-            log('Error: %s Playing radio on %s' % (sys.exc_info()[1], self.card))
+            log('Error Playing radio on %s' % (self.card))
+            log(traceback.format_exc())
             out = None
             PCM = None
             return
@@ -1165,7 +1172,8 @@ class RadioFunctions:
                                 args = ['-d %s' % config.opt_dict['radio_device'], '-j', '-f %s' % config.channels[config.active_channel]['frequency']])
 
         except:
-            log('Error: %s Starting %s' % (sys.exc_info()[1], config.ivtv_radio))
+            log('Error Starting %s:' % (config.ivtv_radio))
+            log(traceback.format_exc())
 
         if config.opt_dict['radio_cardtype'] in (0, 1):
             try:
@@ -1173,7 +1181,8 @@ class RadioFunctions:
                 config.play_pcm.start()
 
             except:
-                log('Error: %s, Starting Playback' % (sys.exc_info()[1]))
+                log('Error Starting Playback:')
+                log(traceback.format_exc())
 
         elif config.opt_dict['radio_cardtype'] == 2:
             log('%s sset "%s" %s' % (self.get_cardid(), config.opt_dict['source_switch'], config.opt_dict['source']))
@@ -1181,7 +1190,8 @@ class RadioFunctions:
                 check_call(['amixer', '--quiet', '--card=%s' % self.get_cardid(), 'sset', '"%s"'  % (config.opt_dict['source_switch']), config.opt_dict['source']])
 
             except:
-                log('Error: %s, Selecting Source' % (sys.exc_info()[1]))
+                log('Error Selecting Source:')
+                log(traceback.format_exc())
 
         config.mixer.setvolume(config.retrieve_value('RadioVolume',70))
         config.mixer.setmute(0)
@@ -1259,6 +1269,7 @@ class RadioFunctions:
 
         except:
             log('Error retreiving frequency from %s' % config.opt_dict['radio_device'])
+            log(traceback.format_exc())
 
     # end get_active_frequency()
 
@@ -1282,6 +1293,7 @@ class RadioFunctions:
 
         except:
             log('Error setting frequency for %s' % config.opt_dict['radio_device'])
+            log(traceback.format_exc())
 
     # end set_channel()
 
@@ -1306,6 +1318,7 @@ class RadioFunctions:
 
         except:
             log('Error setting frequency for %s' % config.opt_dict['video_device'])
+            log(traceback.format_exc())
 
     # end tune_tv()
 
@@ -1526,10 +1539,8 @@ class RadioFunctions:
             #~ return
 
         file = '%s/fmmenu.xml' % config.ivtv_dir
-        try:
+        if os.path.exists(file):
             os.rename(file, file + '.old')
-        except:
-            pass
 
         try:
             f = io.open(file, 'w')
@@ -1556,8 +1567,9 @@ class RadioFunctions:
 
             f.close()
 
-        except Exception as e:
+        except:
             log('failed to create menufile %s' % file)
+            log(traceback.format_exc())
 
 # end RadioFunctions()
 

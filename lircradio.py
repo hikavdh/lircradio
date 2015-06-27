@@ -21,7 +21,7 @@ description_text = """
 
 import sys, io, os, datetime, time
 import re, codecs, locale, pwd
-import socket, argparse
+import socket, argparse, traceback
 from stat import *
 from threading import Thread
 from Queue import Queue
@@ -29,12 +29,6 @@ try:
     from subprocess32 import *
 except:
     from subprocess import *
-#~ try:
-    #~ from radioFunctions import config as rfconf
-    #~ from radioFunctions import RadioFunctions as rfcalls
-#~ except:
-    #~ print "I cannot load radioFunctions.py. Make sure it's in the same directory!"
-    #~ sys.exit(2)
 
 # check Python version
 if sys.version_info[:2] < (2,6):
@@ -44,7 +38,7 @@ if sys.version_info[:2] < (2,6):
 elif sys.version_info[:2] >= (3,0):
     sys.stderr.write("lircradio does not support Pyton 3 or higher.\nExpect errors while we proceed\n")
 
-class Log(Thread):
+class Logging(Thread):
     def __init__(self):
         Thread.__init__(self)
         self.log_level = 29
@@ -53,6 +47,8 @@ class Log(Thread):
         self.log_output = None
         self.stderr_write = None
         self.stderr_read = None
+        self.stderr_fifo = None
+        self.stderr_listner = None
 
     def run(self):
         self.log_queue.put(u'Opening Logfile: %s\n' % config.log_file)
@@ -88,16 +84,8 @@ class Log(Thread):
                 self.rotate_log()
 
         except:
-            err_obj = sys.exc_info()[2]
-            self.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
-
-            while True:
-                err_obj = err_obj.tb_next
-                if err_obj == None:
-                    break
-
-                self.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
-
+            self.log('\nAn unexpected error has occured:\n', 0)
+            self.log(traceback.format_exc())
             self.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
             return(99)
 
@@ -155,7 +143,8 @@ class Log(Thread):
             self.stderr_read = io.FileIO(self.stderr_fifo, mode = 'r')
 
         except:
-            self.log('Error: %s reading stderr_fifo: %s\n' % (sys.exc_info()[1], self.stderr_fifo),0)
+            self.log('Error reading stderr_fifo: %s\n' % (self.stderr_fifo),0)
+            self.log(traceback.format_exc())
             return(1)
 
         # Opening the write handle to the fifo
@@ -164,105 +153,11 @@ class Log(Thread):
 
         except:
             self.log('Error writing to stderr_fifo: %s\n' % self.stderr_fifo, 0)
+            self.log(traceback.format_exc())
             return(1)
 
-# end Log()
-log = Log()
-
-class Listen_to_StdErr(Thread):
-    def __init__(self):
-        Thread.__init__(self)
-        # Checking out the fifo file
-        try:
-            tmpval = os.umask(0115)
-            for f in (log.stderr_fifo,):
-                if os.access(f, os.F_OK):
-                    if not S_ISFIFO(os.stat(f).st_mode):
-                         os.remove(f)
-                         os.mkfifo(f, 0662)
-
-                    if not os.access(f, os.R_OK):
-                        os.chmod(f, 0662)
-
-                else:
-                    os.mkfifo(f, 0662)
-
-        except:
-            log.log('Error creating stderr_fifo: %s\n' % log.stderr_fifo, 0)
-
-        os.umask(tmpval)
-
-    def run(self):
-        byteline = ''
-        byte = ''
-        try:
-            while True:
-                try:
-                    if log.stderr_read != None:
-                        byte = log.stderr_read.readline(1)
-
-                except:
-                    pass
-
-                if byte == None or (byte == '\n' and byteline == '') or (byte == ' ' and byteline == ''):
-                    continue
-
-                elif byte != '\n':
-                    byteline += byte
-                    continue
-
-                elif byteline.strip().lower() == 'start':
-                    log.log('Starting stderr Listener on %s\n'% log.stderr_fifo, 1)
-                    byteline = ''
-                    continue
-
-                elif byteline.strip().lower() == 'quit' or self.quit:
-                    log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
-                    return(0)
-
-                log.log('%s\n' % byteline)
-                byteline = ''
-
-        except:
-            err_obj = sys.exc_info()[2]
-            log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
-
-            while True:
-                err_obj = err_obj.tb_next
-                if err_obj == None:
-                    break
-
-                log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
-
-            log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
-            return(99)
-
-        log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
-
-# end Listen_to_StdErr()
-
-class FiFo_Activator(Thread):
-    def __init__(self, fifo, name):
-        Thread.__init__(self)
-        self.fifo = fifo
-        self.name = name
-
-    def run(self):
-        fp = '/tmp/' + pwd.getpwuid(os.getuid())[0] + '-' + self.name + '-start.sh'
-        if os.access(fp, os.F_OK):
-            os.remove(fp)
-
-        f =io.open(fp, 'wb')
-        f.write('#!/bin/bash\n')
-        f.write('echo "start" > %s\n' % self.fifo)
-        f.write('\n')
-        f.close()
-        os.chmod(fp, 0700)
-        call([fp])
-        time.sleep(1)
-        os.remove(fp)
-
-# end FiFo_Activator()
+# end Logging()
+log = Logging()
 
 class Configure:
     """This class holds all configuration details and manages file IO"""
@@ -306,14 +201,14 @@ class Configure:
             os.mkdir(self.ivtv_dir)
 
         self.etc_dir = u'/etc/lircradio'
-        self.config_file =u'/radioFunctions.conf'
+        self.config_file =u'/lircradio.conf'
         self.log_file = u'%s/lircradio.log' % self.ivtv_dir
         self.opt_dict['verbose'] = False
+        self.opt_dict['case_sensitive'] = False
 
         # Initialising fifo variables
         self.opt_dict['fifo_file'] = u'/tmp/%s-fiforadio' % self.username
         self.opt_dict['lirc_id'] = u'lircradio'
-        self.opt_dict['case_sensitive'] = False
         self.fifo_read = None
         self.fifo_write = None
         self.ircat_pid = None
@@ -323,14 +218,19 @@ class Configure:
                                          u'hibernate'                :u'Hibernate',
                                          u'suspend'                    :u'Suspend'}
         self.call_list = {}
-        self.call_list_lower = {}
+        #~ self.call_list_lower = {}
         for v in self.functioncalls.values():
-            self.call_list[v] = -1
-            self.call_list_lower[v.lower()] = -1
+            self.call_list[v.lower()] = {}
+            self.call_list[v.lower()]['plugin'] = -1
+            self.call_list[v.lower()]['function'] = v
+            #~ self.call_list[v.lower()] = -1
+            #~ self.call_list_lower[v.lower()] = -1
 
         self.function_commands = {}
-        self.bash_commands = {}
-        self.external_commands = {'test': ['echo', 'Testing the pipe\n']}
+        self.external_commands = {}
+        self.external_commands_lower = {}
+        self.shell_commands = {'test': ['echo', 'Testing the pipe\n']}
+        self.shell_commands_lower = {'test': ['echo', 'Testing the pipe\n']}
         self.plugin_list = {0:'testPlugin',
                                      1:'radioFunctions'}
 
@@ -358,11 +258,8 @@ class Configure:
 
     def save_oldfile(self, file):
         """ save the old file to .old if it exists """
-        try:
+        if os.path.exists(file):
             os.rename(file, file + '.old')
-
-        except Exception as e:
-            pass
 
     # end save_old()
 
@@ -551,7 +448,7 @@ class Configure:
                 return re.sub('\n', '',path)
 
             except:
-                log('%s not Found!\n' % (name))
+                log.log('%s not Found!\n' % (name))
                 return None
 
         else:
@@ -560,7 +457,7 @@ class Configure:
                 return re.sub('\n', '',path)
 
             except:
-                log('%s not Found!\n' % (name))
+                log.log('%s not Found!\n' % (name))
                 return None
 
     # end check_path()
@@ -583,19 +480,20 @@ class Configure:
             if len(a) != 2:
                 continue
 
-            #~ try:
-            if a[0] in self.plugin_list.values() and not a[0] in self.plugins:
-                if a[0] == self.plugin_list[1]:
-                    self.plugins.append(a[0])
-                    from radioFunctions import config as piconf
-                    self.pi_conf[pi_cnt] = piconf
-                    from radioFunctions import RadioFunctions
-                    self.pi_func[pi_cnt] = RadioFunctions
+            try:
+                if a[0] in self.plugin_list.values() and not a[0] in self.plugins:
+                    if a[0] == self.plugin_list[1]:
+                        self.plugins.append(a[0])
+                        from radioFunctions import config as piconf
+                        self.pi_conf[pi_cnt] = piconf
+                        from radioFunctions import RadioFunctions
+                        self.pi_func[pi_cnt] = RadioFunctions
 
-                pi_cnt += 1
+                    pi_cnt += 1
 
-            #~ except:
-                #~ print "Unable to load %s.py. Make sure it's in the same directory!" % self.plugins[pi_cnt]
+            except:
+                print "Unable to load %s.py. Make sure it's in the same directory!\n" % self.plugins[pi_cnt]
+                traceback.format_exc()
 
         self.plugin_count = pi_cnt
         for p in range(self.plugin_count):
@@ -608,8 +506,12 @@ class Configure:
             self.__STR_VARS__.extend(self.pi_conf[p].__STR_VARS__)
             self.__NONE_STR_VARS__.extend(self.pi_conf[p].__NONE_STR_VARS__)
             for v in self.pi_conf[p].functioncalls.values():
-                self.call_list[v] = p
-                self.call_list_lower[v.lower()] = p
+                if v.lower() in self.call_list.keys():
+                    continue
+
+                self.call_list[v.lower()] = {}
+                self.call_list[v.lower()]['plugin'] = p
+                self.call_list[v.lower()]['function'] = v
 
     # end get_plugins()
 
@@ -631,9 +533,6 @@ class Configure:
 
         parser.add_argument('-q', '--quiet', action = 'store_false', default = None, dest = 'verbose',
                         help = 'suppress all output.')
-
-        #~ parser.add_argument('-d', '--daemon', action = 'store_true', default = None, dest = 'daemon',
-                        #~ help = 'run as a daemon.')
 
         parser.add_argument('-c', '--configure', action = 'store_true', default = False, dest = 'configure',
                         help = 'create configfile; rename an existing file to *.old.')
@@ -772,7 +671,7 @@ class Configure:
                             else:
                                 log.log('Ignoring incomplete Options line in config file %s: %r\n' % (file, line))
 
-                        except Exception:
+                        except:
                             log.log('Invalid Options line in config file %s: %r\n' % (file, line))
                             continue
 
@@ -781,102 +680,57 @@ class Configure:
                         try:
                             # Strip the lircname from the command
                             a = line.split('=',1)
-                            if self.opt_dict['case_sensitive']:
-                                if(len(a) == 1) and (unicode(a[0].strip()) in self.call_list.keys()):
-                                    self.function_commands[unicode(a[0].strip())] = {}
-                                    self.function_commands[unicode(a[0].strip())]['plugin'] = self.call_list[unicode(a[0].strip())]
-                                    self.function_commands[unicode(a[0].strip())]['function'] = unicode(a[0].strip())
+                            lirc_cmd = unicode(a[0].strip())
+                            cmd_line = lirc_cmd
+                            if len(a) > 1:
+                                cmd_line = unicode(a[1].strip())
 
-                                elif (len(a) == 2) and (unicode(a[1].strip()) in self.call_list.keys()):
-                                    self.function_commands[unicode(a[0].strip())] = {}
-                                    self.function_commands[unicode(a[0].strip())]['plugin'] = self.call_list[unicode(a[1].strip())]
-                                    self.function_commands[unicode(a[0].strip())]['function'] = unicode(a[1].strip())
+                            if cmd_line.lower() in self.call_list.keys():
+                                self.function_commands[lirc_cmd] = cmd_line
 
-                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
-                                    self.external_commands[unicode(a[0].strip())] = []
-                                    quote_cnt = 0
-                                    quote_cmd = ''
-                                    word_cmd = ''
-                                    aa = unicode(a[1].strip())[5:].strip()
-                                    for c in range(len(aa)):
-                                        if quote_cnt == 1:
-                                            if aa[c] == '"':
-                                                self.external_commands[unicode(a[0].strip())].append(quote_cmd)
-                                                quote_cnt = 0
-                                                quote_cmd = ''
-                                                continue
+                            elif (len(a) > 1) and cmd_line.lower()[0:8] == 'command:':
+                                self.external_commands[lirc_cmd] =cmd_line[8:].strip()
+                                self.external_commands_lower[lirc_cmd.lower()] = self.external_commands[lirc_cmd]
 
-                                            else:
-                                                quote_cmd = u'%s%s' % (quote_cmd, aa[c])
-                                                continue
+                            elif (len(a) > 1) and cmd_line.lower()[0:5] == 'bash:':
+                                self.shell_commands[lirc_cmd] = []
+                                quote_cnt = 0
+                                quote_cmd = ''
+                                word_cmd = ''
+                                aa = cmd_line[5:].strip()
+                                for c in range(len(aa)):
+                                    if quote_cnt == 1:
+                                        if aa[c] == '"':
+                                            self.shell_commands[lirc_cmd].append(quote_cmd)
+                                            quote_cnt = 0
+                                            quote_cmd = ''
+                                            continue
 
-                                        elif quote_cnt == 0:
-                                            if aa[c] == '"':
-                                                quote_cnt = 1
-                                                quote_cmd = ''
+                                        else:
+                                            quote_cmd = u'%s%s' % (quote_cmd, aa[c])
+                                            continue
 
-                                            elif aa[c] != ' ':
-                                                word_cmd = u'%s%s' % (word_cmd, aa[c])
-                                                continue
+                                    elif quote_cnt == 0:
+                                        if aa[c] == '"':
+                                            quote_cnt = 1
+                                            quote_cmd = ''
 
-                                        if word_cmd != '':
-                                            self.external_commands[unicode(a[0].strip())].append(word_cmd)
-                                            word_cmd = ''
-                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
-                                    bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
-                                else:
-                                    log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
+                                        elif aa[c] != ' ':
+                                            word_cmd = u'%s%s' % (word_cmd, aa[c])
+                                            continue
+
+                                    if word_cmd != '':
+                                        self.shell_commands[lirc_cmd].append(word_cmd)
+                                        word_cmd = ''
+
+                                self.shell_commands_lower[lirc_cmd.lower()] = self.shell_commands[lirc_cmd]
 
                             else:
-                                if(len(a) == 1) and (unicode(a[0].strip().lower()) in self.call_list_lower.keys()):
-                                    self.function_commands[unicode(a[0].strip().lower())] = {}
-                                    self.function_commands[unicode(a[0].strip().lower())]['plugin'] = self.call_list[unicode(a[0].strip())]
-                                    self.function_commands[unicode(a[0].strip().lower())]['function'] = unicode(a[0].strip().lower())
+                                log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
 
-                                elif (len(a) == 2) and (unicode(a[1].strip().lower()) in self.call_list_lower.keys()):
-                                    self.function_commands[unicode(a[0].strip().lower())] = {}
-                                    self.function_commands[unicode(a[0].strip().lower())]['plugin'] = self.call_list[unicode(a[1].strip())]
-                                    self.function_commands[unicode(a[0].strip().lower())]['function'] = unicode(a[1].strip().lower())
-
-                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:5] == 'bash:':
-                                    self.external_commands[unicode(a[0].strip())] = []
-                                    quote_cnt = 0
-                                    quote_cmd = ''
-                                    word_cmd = ''
-                                    aa = unicode(a[1].strip())[5:].strip()
-                                    for c in range(len(aa)):
-                                        if quote_cnt == 1:
-                                            if aa[c] == '"':
-                                                self.external_commands[unicode(a[0].strip())].append(quote_cmd)
-                                                quote_cnt = 0
-                                                quote_cmd = ''
-                                                continue
-
-                                            else:
-                                                quote_cmd = u'%s%s' % (quote_cmd, aa[c])
-                                                continue
-
-                                        elif quote_cnt == 0:
-                                            if aa[c] == '"':
-                                                quote_cnt = 1
-                                                quote_cmd = ''
-
-                                            elif aa[c] != ' ':
-                                                word_cmd = u'%s%s' % (word_cmd, aa[c])
-                                                continue
-
-                                        if word_cmd != '':
-                                            self.external_commands[unicode(a[0].strip())].append(word_cmd)
-                                            word_cmd = ''
-                                elif (len(a) > 1) and unicode(a[1].strip().lower())[0:8] == 'command:':
-                                    bash_commands[unicode(a[0].strip())] = unicode(a[1].strip())[8:].strip()
-                                else:
-                                    log.log('Ignoring Lirc line in config file %s: %r\n' % (file, line))
-
-
-                        except Exception:
-                            log.log('\nAn unexpected error has occured at line: %s: %s\n' %  (sys.exc_info()[2].tb_lineno, sys.exc_info()[1]), 0)
+                        except:
                             log.log('Invalid Lirc line in config file %s: %r\n' % (file, line))
+                            log.log(traceback.format_exc())
                             continue
 
                 elif plugin in range(self.plugin_count):
@@ -884,6 +738,7 @@ class Configure:
 
             except Exception as e:
                 log.log(u'Error reading Config\n')
+                log.log(traceback.format_exc())
                 continue
 
         f.close()
@@ -936,22 +791,22 @@ class Configure:
             log_file = self.log_file
 
         if self.args.log_file != None and log_file != self.args.log_file:
-            log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, log_file), 0)
+            log.log('1Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.args.log_file, log_file), 0)
 
         elif 'log_file' in self.opt_dict.keys() and log_file != self.opt_dict['log_file']:
-            log('Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.opt_dict['log_file'], log_file), 0)
+            log.log('2Error opening supplied logfile: %s. \nCheck permissions! Falling back to %s\n' % (self.opt_dict['log_file'], log_file), 0)
 
         self.log_file = log_file
         log.open_stderr_filehandles()
         log.start()
+        if self.args.case_sensitive != None:
+            self.opt_dict['case_sensitive'] = self.args.case_sensitive
+
         if self.args.fifo_file != None:
             self.opt_dict['fifo_file'] = self.args.fifo_file
 
         if self.args.lirc_id != None:
             self.opt_dict['lirc_id'] = self.args.lirc_id
-
-        if self.args.case_sensitive != None:
-            self.opt_dict['case_sensitive'] = self.args.case_sensitive
 
         for p in range(self.plugin_count):
             x = self.pi_conf[p].validate_options(self.args)
@@ -1016,6 +871,7 @@ class Configure:
 
         except:
             log.log('Error creating fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log(traceback.format_exc())
 
         os.umask(tmpval)
         start = FiFo_Activator(self.opt_dict['fifo_file'], 'fifo')
@@ -1027,6 +883,7 @@ class Configure:
 
         except:
             log.log('Error reading fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log(traceback.format_exc())
             return(1)
 
         # Opening the write handle to the fifo
@@ -1035,6 +892,7 @@ class Configure:
 
         except:
             log.log('Error writing to fifo-file: %s\n' % self.opt_dict['fifo_file'],0)
+            log.log(traceback.format_exc())
             return(1)
     # end open_fifo_filehandles()
 
@@ -1173,10 +1031,10 @@ class Configure:
         for c, command in self.function_commands.items():
             f.write(u'%s = %s\n' % (c, command))
 
-        for c, command in self.bash_commands.items():
+        for c, command in self.external_commands.items():
             f.write(u'%s = COMMAND:%s\n' % (c, command))
 
-        for c, command in self.external_commands.items():
+        for c, command in self.shell_commands.items():
             line = u'%s = BASH:' % c
             for cc in command:
                 if ' ' in cc:
@@ -1229,13 +1087,14 @@ class Configure:
             log.stderr_write.close()
             log.stderr_write = None
 
-        log.stderr_listner.join()
+        if log.stderr_listner != None:
+            log.stderr_listner.join()
 
         if log.stderr_read != None:
                 log.stderr_read.close()
                 log.stderr_read = None
 
-        if os.access(log.stderr_fifo, os.F_OK):
+        if log.stderr_fifo != None and os.access(log.stderr_fifo, os.F_OK):
             os.remove(log.stderr_fifo)
         log.stderr_listner = None
         log.log_queue.put('quit')
@@ -1244,6 +1103,94 @@ class Configure:
 
 # end Configure
 config = Configure()
+
+class FiFo_Activator(Thread):
+    def __init__(self, fifo, name):
+        Thread.__init__(self)
+        self.fifo = fifo
+        self.name = name
+
+    def run(self):
+        fp = '/tmp/' + pwd.getpwuid(os.getuid())[0] + '-' + self.name + '-start.sh'
+        if os.access(fp, os.F_OK):
+            os.remove(fp)
+
+        f =io.open(fp, 'wb')
+        f.write('#!/bin/bash\n')
+        f.write('echo "start" > %s\n' % self.fifo)
+        f.write('\n')
+        f.close()
+        os.chmod(fp, 0700)
+        call([fp])
+        time.sleep(1)
+        os.remove(fp)
+
+# end FiFo_Activator()
+
+class Listen_to_StdErr(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        # Checking out the fifo file
+        try:
+            tmpval = os.umask(0115)
+            for f in (log.stderr_fifo,):
+                if os.access(f, os.F_OK):
+                    if not S_ISFIFO(os.stat(f).st_mode):
+                         os.remove(f)
+                         os.mkfifo(f, 0662)
+
+                    if not os.access(f, os.R_OK):
+                        os.chmod(f, 0662)
+
+                else:
+                    os.mkfifo(f, 0662)
+
+        except:
+            log.log('Error creating stderr_fifo: %s\n' % log.stderr_fifo, 0)
+            log.log(traceback.format_exc())
+
+        os.umask(tmpval)
+
+    def run(self):
+        byteline = ''
+        byte = ''
+        try:
+            while True:
+                try:
+                    if log.stderr_read != None:
+                        byte = log.stderr_read.readline(1)
+
+                except:
+                    pass
+
+                if byte == None or (byte == '\n' and byteline == '') or (byte == ' ' and byteline == ''):
+                    continue
+
+                elif byte != '\n':
+                    byteline += byte
+                    continue
+
+                elif byteline.strip().lower() == 'start':
+                    log.log('Starting stderr Listener on %s\n'% log.stderr_fifo, 1)
+                    byteline = ''
+                    continue
+
+                elif byteline.strip().lower() == 'quit' or self.quit:
+                    log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
+                    return(0)
+
+                log.log('%s\n' % byteline)
+                byteline = ''
+
+        except:
+            log.log('\nAn unexpected error has occured:\n', 0)
+            log.log(traceback.format_exc())
+            log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
+            return(99)
+
+        log.log('Closing stderr Listener on %s\n'% log.stderr_fifo, 1)
+
+# end Listen_to_StdErr()
 
 class Listen_To(Thread):
     """
@@ -1255,6 +1202,22 @@ class Listen_To(Thread):
         self.fifo = fifo
 
     def run(self):
+        internal_cmds = {}
+        if config.opt_dict['case_sensitive']:
+            for k, c in config.function_commands.items():
+                if c == config.call_list[c.lower()]['function']:
+                    internal_cmds[k] = config.call_list[c.lower()]
+
+            external_cmds = config.external_commands
+            bash_cmds = config.shell_commands
+
+        else:
+            for k, c in config.function_commands.items():
+                internal_cmds[k.lower()] = config.call_list[c.lower()]
+
+            external_cmds = config.external_commands_lower
+            bash_cmds = config.shell_commands_lower
+
         byteline = ''
         try:
             while True:
@@ -1270,14 +1233,11 @@ class Listen_To(Thread):
                 if byte == None or (byte == '\n' and byteline == '') or (byte == ' ' and byteline == ''):
                     continue
 
-                elif byte != '\n':
+                elif byte != '\n' and  byte != ' ':
                     byteline += byte
                     continue
 
-                if not config.opt_dict['case_sensitive']:
-                    byteline = byteline.lower()
-
-                if byteline.strip().lower() == 'start':
+                elif byteline.strip().lower() == 'start':
                     log.log('Starting Command Listener on %s\n'% config.opt_dict['fifo_file'], 1)
                     byteline = ''
                     continue
@@ -1286,15 +1246,20 @@ class Listen_To(Thread):
                     log.log('%s command received.\n' % byteline, 2)
                     return(0)
 
-                elif re.match('([0-9]+?)', byteline.strip()):
+                elif re.match('([0-9]+)', byteline.strip()):
+                    chan = int(re.match('([0-9]+)', byteline.strip()).group(0))
                     log.log('%s command received.\n' % byteline, 2)
-                    rfcalls().select_channel(int(re.match('([0-9]+?)', byteline.strip()).group(0)))
+                    #~ rfcalls().select_channel(int(re.match('([0-9]+)', byteline.strip()).group(0)))
                     byteline = ''
+                    continue
 
-                elif byteline.strip() in config.function_commands.keys():
+                if not config.opt_dict['case_sensitive']:
+                    byteline = byteline.lower()
+
+                if byteline.strip() in internal_cmds.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    pi_cmd = config.function_commands['function']
-                    if config.function_commands['plugin'] == -1:
+                    pi_cmd = internal_cmds['function']
+                    if internal_cmds['plugin'] == -1:
                         if pi_cmd == 'PowerOff'and config.command_name != None:
                             log.log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
                             call([config.command_name,'poweroff'])
@@ -1317,19 +1282,19 @@ class Listen_To(Thread):
 
                             call([config.command_name,'suspend'])
 
-                    elif config.function_commands['plugin'] in range(config.plugin_count):
-                        config.pi_func[config.function_commands['plugin']]().rf_function_call(pi_cmd)
+                    elif internal_cmds['plugin'] in range(config.plugin_count):
+                        config.pi_func[internal_cmds['plugin']]().rf_function_call(pi_cmd)
 
                     byteline = ''
 
-                elif byteline.strip() in config.bash_commands.keys():
+                elif byteline.strip() in external_cmds.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    call([config.command_name,config.bash_commands[byteline.strip()]])
+                    call([config.command_name,external_cmds[byteline.strip()]])
                     byteline = ''
 
-                elif byteline.strip() in config.external_commands.keys():
+                elif byteline.strip() in bash_cmds.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    call(config.external_commands[byteline.strip()])
+                    call(bash_cmds[byteline.strip()])
                     byteline = ''
 
                 else:
@@ -1337,16 +1302,8 @@ class Listen_To(Thread):
                     byteline = ''
 
         except:
-            err_obj = sys.exc_info()[2]
-            log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
-
-            while True:
-                err_obj = err_obj.tb_next
-                if err_obj == None:
-                    break
-
-                log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
-
+            log.log('\nAn unexpected error has occured:\n', 0)
+            log.log(traceback.format_exc())
             log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
             return(99)
 
@@ -1358,6 +1315,7 @@ def main():
         # Get the options, channels and other configuration
 
         x = config.validate_commandline()
+        print x
         if x != None:
             return(x)
 
@@ -1375,16 +1333,8 @@ def main():
             config.ircat_pid.kill()
 
     except:
-        err_obj = sys.exc_info()[2]
-        log.log('\nAn unexpected error has occured at line: %s, %s: %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti, sys.exc_info()[1]), 0)
-
-        while True:
-            err_obj = err_obj.tb_next
-            if err_obj == None:
-                break
-
-            log.log('                   tracing back to line: %s, %s\n' %  (err_obj.tb_lineno, err_obj.tb_lasti), 0)
-
+        log.log('\nAn unexpected error has occured:\n', 0)
+        log.log(traceback.format_exc())
         log.log('\nIf you want assistence, please attach your configuration and log files!\n     %s\n     %s\n' % (config.config_file, config.log_file),0)
         return(99)
 
