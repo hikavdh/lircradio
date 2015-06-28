@@ -824,32 +824,17 @@ class Configure:
 
         self.write_opts_to_log()
         if self.args.configure:
-            if self.opt_dict['radio_device'] == None:
-                log.log('You need an accesible radio-device to configure\n')
-                self.write_config(True)
-                return(1)
-            else:
-                self.write_config(False)
-                return(0)
-
-        #~ elif self.opt_dict['radio_out'] == self.select_card:
-            #~ self.opt_dict['radio_out'] = None
+            self.write_config(False)
+            return(0)
 
         if self.args.save_options:
             self.write_config(True)
             return(0)
 
-        #~ if len(rfconf.channels) == 0 and self.opt_dict['radio_device'] != None:
-            #~ log.log('There are no channels defined! Exiting!\n', 0)
-            #~ log.log('Disable the radio plugin, \n', 0)
-            #~ log.log('run it with --card-type -1 to disable radio support!\n', 0)
-            #~ log.log('or with --configure to probe for available frequencies!\n', 0)
-            #~ return(1)
-
-        #~ if self.opt_dict['radio_cardtype'] != None and 0 <= self.opt_dict['radio_cardtype'] <= 2:
-            #~ if not rfconf.set_mixer():
-                #~ log.log('Error setting the mixer\n')
-                #~ return(1)
+        for p in range(self.plugin_count):
+            x = self.pi_conf[p].final_validation()
+            if x != None:
+                return(x)
 
     # end validate_commandline()
 
@@ -1258,8 +1243,9 @@ class Listen_To(Thread):
 
                 if byteline.strip() in internal_cmds.keys():
                     log.log('%s command received.\n' % byteline, 2)
-                    pi_cmd = internal_cmds['function']
-                    if internal_cmds['plugin'] == -1:
+                    pi_cmd = internal_cmds[byteline.strip()]['function']
+                    pi_num = internal_cmds[byteline.strip()]['plugin']
+                    if pi_num == -1:
                         if pi_cmd == 'PowerOff'and config.command_name != None:
                             log.log('Executing %s %s' % (config.command_name, 'poweroff'), 32)
                             call([config.command_name,'poweroff'])
@@ -1282,8 +1268,8 @@ class Listen_To(Thread):
 
                             call([config.command_name,'suspend'])
 
-                    elif internal_cmds['plugin'] in range(config.plugin_count):
-                        config.pi_func[internal_cmds['plugin']]().rf_function_call(pi_cmd)
+                    elif pi_num in range(config.plugin_count):
+                        config.pi_func[pi_num]().rf_function_call(pi_cmd)
 
                     byteline = ''
 
